@@ -21,11 +21,10 @@ class CR39:
     def __init__(self, path, verbose=False):
         self.verbose = verbose
         
+        self.cuts = []
+        
         
         self._read_CPSA(path)
-        
-        
-        
         
     def _log(self, msg):
         if self.verbose:
