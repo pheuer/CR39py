@@ -8,6 +8,7 @@ Object representing a CR39 dataset
 import numpy as np
 
 from collections import namedtuple
+from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
 
@@ -15,6 +16,13 @@ import matplotlib.pyplot as plt
 FrameHeader = namedtuple('FrameHeader', ['number', 'xpos', 'ypos', 
                                          'hits', 'BLENR', 'zpos', 
                                          'x_ind', 'y_ind'])
+
+
+
+@dataclass
+class Cut:
+    xmin : float = -1e6
+    xmax : float = 1e6
 
 class CR39:
     
@@ -189,18 +197,39 @@ class CR39:
         self.trackdata = np.zeros([tot_hits, 6])
         for i in range(self.nframes):
             self.trackdata[cum_hits[i]:cum_hits[i+1], :] = tracks[i]
+            
+        # Store all the tracks, as a starting point for making cuts on
+        # self.trackdata
+        self.raw_trackdata = np.copy(self.trackdata)
 
             
     def frames(self):
-
         arr, xedges, yedges = np.histogram2d(self.trackdata[:,0],
                                              self.trackdata[:,1],
                                              bins=[self.xax, self.yax])
         # Calculate the bin centers
         xax =0.5*(xedges[:-1] + xedges[1:])
-        yax =0.5*(yedges[:-1] + yedges[1:])
-        
+        yax =0.5*(yedges[:-1] + yedges[1:])  
         return xax, yax, arr
+    
+    
+    def add_cut(self, cut):
+        if not isinstance(cut, Cut):
+            raise ValueError("Applied cut must be an instance of Cut dataclass")
+        self.cuts.append(cut)
+        
+    def apply_cuts(self):
+        for cut in self.cuts:
+            
+            # TODO: extend to include all the other possible cut dimensions
+            true = (np.greater(self.raw_trackdata[:, 0], cut.xmin) *
+                    np.less(self.raw_trackdata[:, 0], cut.xmax) 
+                    )
+            
+
+            self.trackdata = self.raw_trackdata[true, :]
+            
+        
         
         
         
