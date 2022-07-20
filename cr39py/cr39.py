@@ -8,7 +8,6 @@ Object representing a CR39 dataset
 import numpy as np
 
 from collections import namedtuple
-from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
 
@@ -19,17 +18,82 @@ FrameHeader = namedtuple('FrameHeader', ['number', 'xpos', 'ypos',
 
 
 
-@dataclass
 class Cut:
-    xmin : float = -1e6
-    xmax : float = 1e6
+    defaults = {'xmin':-1e6, 'xmax':1e6, 'ymin':-1e6, 'ymax':1e6,
+                'dmin':0, 'dmax':1e6, 'cmin':0, 'cmax':1e6, 
+                'emin':0, 'emax':1e6}
+    
+    indices = {'xmin':0, 'xmax':0, 'ymin':1, 'ymax':1,
+                'dmin':2, 'dmax':2, 'cmin':3, 'cmax':3, 
+                'emin':5, 'emax':5}
+
+    
+    def __init__(self,  xmin : float = None, xmax : float = None,
+                        ymin : float = None, ymax : float = None,
+                        dmin : float = None, dmax : float = None,
+                        cmin : float = None, cmax : float = None,
+                        emin : float = None, emax : float = None):
+        
+        self.dict = {'xmin':xmin, 'xmax':xmax,
+                     'ymin':ymin, 'ymax':ymax,
+                     'dmin':dmin, 'dmax':dmax,
+                     'cmin':cmin, 'cmax':cmax,
+                     'emin':emin, 'emax':emax}
+
+
+    def __getattr__(self, item):
+        
+        if item in self.dict.keys():
+            if self.dict[item] is None:
+                return self.defaults[item]
+            else:
+                return self.dict[item]
+        else:
+            raise ValueError(f"Unknown attribute for Cut: {item}")
+            
+            
+    def __str__(self):
+        s = [f"{key}:{val}" for key, val in self.dict.items() if val is not None ]
+        s = ', '.join(s)
+        return s
+    
+    
+    def test (self, trackdata, invert=False):
+        """
+        Given tracks, calculates the indices that satisfy this test
+        """
+        ntracks, _ = trackdata.shape
+        keep = np.ones(ntracks).astype('bool')
+        for key in self.dict.keys():
+            if self.dict[key] is not None:
+                i = self.indices[key]
+                if 'min' in key:
+                    x = np.greater(trackdata[:, i], getattr(self, key))
+                else:
+                    x = np.less(trackdata[:, i], getattr(self, key))
+                   
+                if invert:
+                    keep *= ~x
+                else:
+                    keep *= x
+        return keep
+        
+        
+        
+        
+                        
 
 class CR39:
+
     
     def __init__(self, path, verbose=False):
         self.verbose = verbose
         
         self.cuts = []
+        
+        # Axes dictionary for trackdata
+        self.axes_ind = {'X':0, 'Y':1, 'D':2, 'C':3, 'E':5}
+        self.ind_axes = ['X', 'Y', 'D', 'C', 'E']
         
         
         self._read_CPSA(path)
@@ -187,59 +251,246 @@ class CR39:
         self._log("Processing the tracks")
         
 
-
+        # The order of the quantities in track data is: 
+        # 0) x position
+        # 1) y position
+        # 2) diameter
+        # 3) contrast
+        # 4) avg contrast
+        # 5) ecentricity
     
-        # Sort the yaxis (it's backwards...)
-        self.yax = np.sort(self.yax)
-
-        
         # Re-shape the track data into a list of every track
         self.trackdata = np.zeros([tot_hits, 6])
         for i in range(self.nframes):
             self.trackdata[cum_hits[i]:cum_hits[i+1], :] = tracks[i]
             
+        self.ntracks = tot_hits
         # Store all the tracks, as a starting point for making cuts on
         # self.trackdata
         self.raw_trackdata = np.copy(self.trackdata)
+        
+        # Sort the yaxis (it's backwards...)
+        self.yax = np.sort(self.yax)
+        
+        
 
+    def frames(self, axes=('X', 'Y')):
+        """
+        Create a histogram of the track data
+        
+        axes : tuple of 2 or 3 str
+            The first two values represent the axes of the histogram. If no
+            third value is included, then the resulting histogram is of the 
+            number of hits in each  bin. If a third value is included,
+            the histogram will be of that value in each bin
             
-    def frames(self):
-        arr, xedges, yedges = np.histogram2d(self.trackdata[:,0],
-                                             self.trackdata[:,1],
-                                             bins=[self.xax, self.yax])
+            Chose from the following: 
+            'X': x position
+            'Y': y position
+            'D': diameter
+            'C': contrast
+            'E': ecentricity 
+            
+            The default is ('X', 'Y')
+        
+        """
+
+        # Make axes for the other quantites
+        self.dax = np.linspace(0, 20, num=40)
+        self.cax = np.linspace(0, 80, num=80)
+        self.eax = np.linspace(0, 50, num=50)
+        axdict = {'X':self.xax, 'Y':self.yax, 'D':self.dax,
+                'C':self.cax, 'E':self.eax}
+        
+        
+        i0 = self.axes_ind[axes[0]]
+        i1 = self.axes_ind[axes[1]]
+        ax0 = axdict[axes[0]]
+        ax1 = axdict[axes[1]]
+        
+        # If creating a histogram like the X,Y,D plots
+        if len(axes) == 3:
+            i2 = self.axes_ind[axes[2]]
+            weights = self.trackdata[:, i2]
+        else:
+            weights = None
+        
+        
+        arr, xedges, yedges = np.histogram2d(self.trackdata[:,i0],
+                                             self.trackdata[:,i1],
+                                             bins=[ax0, ax1], weights=weights)
+        
         # Calculate the bin centers
         xax =0.5*(xedges[:-1] + xedges[1:])
-        yax =0.5*(yedges[:-1] + yedges[1:])  
+        yax =0.5*(yedges[:-1] + yedges[1:]) 
+        
+
+        # Create the unweighted histogram and divide by it (sans zeros)
+        if len(axes)==3:
+            arr_uw, _, _ = np.histogram2d(self.trackdata[:,i0],
+                                             self.trackdata[:,i1],
+                                             bins=[ax0, ax1])
+            nz = np.nonzero(arr_uw)
+            arr[nz] = arr[nz]/arr_uw[nz]
+        
         return xax, yax, arr
     
     
-    def add_cut(self, cut):
-        if not isinstance(cut, Cut):
-            raise ValueError("Applied cut must be an instance of Cut dataclass")
-        self.cuts.append(cut)
+    def add_cut(self, c):
+        self.cuts.append(c)
+           
+    def remove_cut(self, i):
+        if i > len(self.cuts)-1:
+            raise ValueError(f"Cannot remove the {i} cut, there are only "
+                             f"{len(self.cuts)} cuts.")
+        self.cuts.pop(i)
         
-    def apply_cuts(self):
-        for cut in self.cuts:
+    def replace_cut(self, i, c):
+        self.cuts[i] = c
+        
+    def print_cuts(self):
+        if len(self.cuts) == 0:
+            print("No cuts")
+        
+        for i,cut in enumerate(self.cuts):
+            print(f"Cut {i}: {str(cut)}")
+        
+        
+    def apply_cuts(self, subset=None, invert=False):
+        """
+        Apply cuts to the track data
+        
+        subset : int, list of ints (optional)
+            If provided, only the cuts corresponding to the int or ints 
+            provided will be applied. The default is to apply all cuts
             
-            # TODO: extend to include all the other possible cut dimensions
-            true = (np.greater(self.raw_trackdata[:, 0], cut.xmin) *
-                    np.less(self.raw_trackdata[:, 0], cut.xmax) 
-                    )
+        invert : bool (optional)
+            If true, return the inverse of the cuts selected. Default is 
+            false.
             
 
-            self.trackdata = self.raw_trackdata[true, :]
+        """
+        
+        # TODO: actually implement this
+        """
+        if subset is None:
+            subset = list(np.arange(len(self.cuts)))
+        else:
+            if isinstance(subset, int):
+                subset = [subset,]
+            if any(s > len(self.cuts)-1 for s in self.cuts):
+                raise ValueError("Specified list of cuts is invalid")
+        """
+
+        self.trackdata = np.copy(self.raw_trackdata)
+
+        for cut in self.cuts:
+            # Find which tracks satisfy this cut
+            keep = cut.test(self.trackdata, invert=invert)
+            # Keep only those tracks
+            self.trackdata = self.trackdata[keep, :]
+
+
+        
+    def plot(self, axes=('X', 'Y'), log=False, figax=None, 
+             xrange=None, yrange=None, zrange=None):
+        """
+        Plots a histogram of the track data
+        
+        axes: tuple of str
+            Passes to the axes parameter of 'frames'
+
+        """
+        fontsize=16
+        ticksize=14
+        
+        xax, yax, arr = self.frames(axes=axes)
+        
+        if figax is None:
+            fig, ax = plt.subplots()
+        else:
+            fig, ax = figax
+        
+        if axes[0:2] == ('X', 'Y'):
+            ax.set_aspect('equal')
             
+        if len(axes) == 3:
+            ztitle = axes[2]
+            title = f"{axes[0]}, {axes[1]}, {axes[2]}"
+        else:
+            ztitle = '# Tracks'
+            title = f"{axes[0]}, {axes[1]}"
+            
+        if log:
+            title += ' (log)'
+            nonzero = np.nonzero(arr)
+            arr[nonzero] = np.log10(arr[nonzero])
+        else:
+            title += ' (lin)'
+            
+            
+        arr[arr==0] = np.nan
+            
+
+        if xrange is None:
+            xrange = (np.nanmin(xax), np.nanmax(xax))
+        if yrange is None:
+            yrange = (np.nanmin(yax), np.nanmax(yax))
+        if zrange is None:
+            zrange = (np.nanmin(arr), np.nanmax(arr))
+
+        ax.set_xlim(xrange)
+        ax.set_ylim(yrange)
         
         
+
+        p = ax.pcolormesh(xax, yax, arr.T, vmin=zrange[0], vmax=zrange[1])
+        
+        cb_kwargs = {'orientation':'vertical', 'pad':0.07, 'shrink':0.8, 'aspect':16}
+        cbar= fig.colorbar(p, ax=ax, **cb_kwargs)
+        cbar.set_label(ztitle, fontsize=fontsize)
+        
+        ax.set_xlabel(axes[0], fontsize=fontsize)
+        ax.set_ylabel(axes[1], fontsize=fontsize)
+        ax.set_title(title, fontsize=fontsize)
+        
+        if figax is None:
+            plt.show()
         
         
-        
-    def plot(self):
+    def cutplot(self):
         
         xax, yax, arr = self.frames()
-        fig, ax = plt.subplots()
-        ax.set_aspect('equal')
-        ax.pcolormesh(xax, yax, arr.T, vmax=25*np.median(arr))
+        fig, axarr = plt.subplots(nrows=2, ncols=2, figsize=(10,10))
+        fig.subplots_adjust(hspace=0.3, wspace=0.3)
+                
+        ax = axarr[0][0]
+        self.plot(axes=('X', 'Y'), figax=(fig, ax))
+        
+        ax = axarr[0][1]
+        self.plot(axes=('D', 'C'), figax=(fig, ax),
+                   log=True)
+        
+        ax = axarr[1][0]
+        self.plot(axes=('X', 'Y', 'D'), figax=(fig, ax),
+                   zrange=(1, 7))
+        
+        ax = axarr[1][1]
+        self.plot(axes=('D', 'E'), figax=(fig, ax),
+                   log=True)
+        
+        plt.show()
+        
+  
+        
+  
+"""
+import os
+from cr39py.cr39 import *
+path = os.path.join('\\\expdiv','kodi','ShotData','104394', '104394_TIM2_PR2709_2h_s4.cpsa')
+obj = CR39(path, verbose=True)
+"""
+        
         
         
         
