@@ -346,12 +346,12 @@ class CR39:
         i0 = self.axes_ind[axes[0]]
         i1 = self.axes_ind[axes[1]]
         
-        if hax is not None:
+        if hax is None:
             ax0 = axdict[axes[0]]
         else:
             ax0 = hax
             
-        if vax is not None:
+        if vax is None:
             ax1 = axdict[axes[1]]
         else:
             ax1 = vax
@@ -467,6 +467,92 @@ class CR39:
             keep = cut.test(self.trackdata, invert=invert)
             # Keep only those tracks
             self.trackdata = self.trackdata[keep, :]
+            
+            
+    
+    def cutcli(self):
+        
+        print("enter 'help' for a list of commands")
+        self.cutplot()
+        
+        while True:
+            
+            print("Current cuts:")
+            if len(self.cuts) == 0:
+                print("No cuts set yet")
+            else:
+                for i, cut in enumerate(self.cuts):
+                    print(cut)
+            
+            print("add (a), delete (d), replace (r), plot (p), plot inverse (pi), help (help)")
+            x = input(">")
+            split = x.split(',')
+            x = split[0]
+            
+            if x == 'help':
+                print("Enter commands, followed by any additional arugments "
+                      "separated by commas.\n"
+                      " ** Commands ** \n"
+                      "'help' -> print this documentation\n"
+                      "'end' -> accept the current values\n"
+                      "'a' -> create a new cut\n"
+                      "'d' -> delete an existing cut\n"
+                      "Arguments are numbers of cuts to delete\n"
+                      "'r' -> replace an existing cut\n"
+                      "'p' -> plot the image with current cuts\n"
+                      "Arguments are numbers of cuts to include in plot\n"
+                      "The default is to include all of the current cuts\n"
+                      "'pi' -> plot the image with INVERSE of the cuts\n"
+                      "Arguments are numbers of cuts to include in plot\n"
+                      "The default is to include all of the current cuts\n"
+                      "\n"
+                      " ** Cut keywords ** \n"
+                      "xmin, xmax, ymin, ymax, dmin, dmax, cmin, cmax, emin, emax\n"
+                      "e.g. 'xmin:0,xmax:5,dmax=15'\n"
+                      )
+                
+            elif x == 'end':
+                break
+            
+            
+            elif x in ['a', 'r']:
+                print("Enter new cut parameters as key:value pairs separated by commas")
+                x2 = input(">")
+                split2 = x2.split(',')
+                split2 = [ s.split(':') for s in split2]
+                kwargs = {str(s[0]):float(s[1]) for s in split2}
+                
+                #validate the keys are all correct
+                valid=True
+                for key in kwargs.keys():
+                    if key not in list(Cut.indices.keys()):
+                        print(f"Unrecognized key: {key}")
+                        valid=False
+                        
+
+                if valid:
+                    c = Cut(**kwargs)
+                    if x == 'r':
+                        ind = int(split[1])
+                        self.replace_cut(c, ind)
+                    
+                    else:
+                        self.add_cut(c)
+                
+            
+            
+            """
+            elif len(split)==2 and str(split[0]) in state.keys():
+                for key in state.keys():
+                    if str(split[0])==key:
+                        state[key] = float(split[1])
+                        
+                self.adjust(**state)
+                self.plot_with_data(xaxis, yaxis, data)
+                        
+            else:
+                print(f"Invalid input: {x}")
+        """
 
 
         
