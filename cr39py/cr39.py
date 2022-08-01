@@ -4,13 +4,14 @@
 
 Object representing a CR39 dataset
 """
-
+import os
 import numpy as np
 
 from collections import namedtuple
 
 import matplotlib.pyplot as plt
 
+from cr39py.util.misc import find_file
 
 FrameHeader = namedtuple('FrameHeader', ['number', 'xpos', 'ypos', 
                                          'hits', 'BLENR', 'zpos', 
@@ -85,22 +86,52 @@ class Cut:
 
 class CR39:
 
+    # Axes dictionary for trackdata
+    axes_ind = {'X':0, 'Y':1, 'D':2, 'C':3, 'E':5}
+    ind_axes = ['X', 'Y', 'D', 'C', 'E']
     
-    def __init__(self, path, verbose=False):
+    def __init__(self, *args, verbose=False, data_dir=None):
+        
+        """
+        arg : path or int
+        
+            Either a shot number or a filepath directly to the data file
+        """
         self.verbose = verbose
         
         self.cuts = []
         
-        # Axes dictionary for trackdata
-        self.axes_ind = {'X':0, 'Y':1, 'D':2, 'C':3, 'E':5}
-        self.ind_axes = ['X', 'Y', 'D', 'C', 'E']
+
+        # If the first argument is a file path, load the file directly
+        # if not, assume it is a shot number and look for it 
+        if isinstance(args[0], str):
+            self.path = args[0]
+        else:
+            if data_dir is None:
+                raise ValueError("The 'data_dir' keyword is required in order "
+                                 "to locate a file based on a shot number.")
+            
+            self.path = self._find_data(args[0], data_dir)
         
-        
-        self._read_CPSA(path)
+        self._read_CPSA(self.path)
         
     def _log(self, msg):
         if self.verbose:
             print(msg)
+            
+            
+    def _find_data(self, id, data_dir):
+        self.data_dir = data_dir
+        self.file_dir = os.path.join(self.data_dir, str(id))
+            
+        # Verify the data_dir exists
+        if not os.path.isdir(self.file_dir):
+            raise ValueError(f"The file directory {self.file_dir} does not exist.")
+        
+        # Find the file path
+        path = find_file(self.file_dir, [ '.cpsa'])
+        
+        return path
         
         
     def _read_CPSA(self, path):
@@ -274,7 +305,7 @@ class CR39:
         
         
 
-    def frames(self, axes=('X', 'Y')):
+    def frames(self, axes=('X', 'Y'), trim=True):
         """
         Create a histogram of the track data
         
@@ -292,6 +323,10 @@ class CR39:
             'E': ecentricity 
             
             The default is ('X', 'Y')
+            
+        trim : bool
+            If true, trim the array and axes down to exclude any entirely 
+            empty rows or columns
         
         """
 
@@ -332,8 +367,38 @@ class CR39:
                                              bins=[ax0, ax1])
             nz = np.nonzero(arr_uw)
             arr[nz] = arr[nz]/arr_uw[nz]
+            
+            
+        # Get rid of any entirely zero rows or columns
+        if trim:
+            xi = np.nonzero(np.sum(arr, axis=1))[0]
+            if len(xi)==0:
+                xa, xb = 0, -1
+            else:
+                xa, xb = xi[0], xi[-1]+1
+    
+            yi = np.nonzero(np.sum(arr, axis=0))[0]
+            if len(yi)==0:
+                ya, yb = 0, -1
+            else:
+                ya, yb = yi[0], yi[-1]+1
+            
+            xax = xax[xa:xb]
+            yax = yax[ya:yb]
+            arr = arr[xa:xb, ya:yb]
         
         return xax, yax, arr
+    
+    
+    def hreflect(self):
+        self.raw_trackdata[:, 0] *= -1
+        self.trackdata[:, 0] *= -1
+        self.plot()
+        
+    def vreflect(self):
+        self.raw_trackdata[:, 1] *= -1
+        self.trackdata[:, 1] *= -1
+        self.plot()
     
     
     def add_cut(self, c):
@@ -456,6 +521,8 @@ class CR39:
         
         if figax is None:
             plt.show()
+            
+        return fig, ax
         
         
     def cutplot(self):
@@ -480,6 +547,8 @@ class CR39:
                    log=True)
         
         plt.show()
+        
+        return fig, ax
         
   
         
