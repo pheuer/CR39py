@@ -303,9 +303,14 @@ class CR39:
         # Sort the yaxis (it's backwards...)
         self.yax = np.sort(self.yax)
         
+        # Make axes for the other quantites
+        self.dax = np.linspace(0, 20, num=40)
+        self.cax = np.linspace(0, 80, num=80)
+        self.eax = np.linspace(0, 50, num=50)
+        
         
 
-    def frames(self, axes=('X', 'Y'), trim=True):
+    def frames(self, axes=('X', 'Y'), trim=True, hax=None, vax=None):
         """
         Create a histogram of the track data
         
@@ -327,21 +332,29 @@ class CR39:
         trim : bool
             If true, trim the array and axes down to exclude any entirely 
             empty rows or columns
+            
+            
+        hax, vax : np.ndarrays
+            If set, replaces the default axes 
         
         """
 
-        # Make axes for the other quantites
-        self.dax = np.linspace(0, 20, num=40)
-        self.cax = np.linspace(0, 80, num=80)
-        self.eax = np.linspace(0, 50, num=50)
+        
         axdict = {'X':self.xax, 'Y':self.yax, 'D':self.dax,
                 'C':self.cax, 'E':self.eax}
         
-        
         i0 = self.axes_ind[axes[0]]
         i1 = self.axes_ind[axes[1]]
-        ax0 = axdict[axes[0]]
-        ax1 = axdict[axes[1]]
+        
+        if hax is not None:
+            ax0 = axdict[axes[0]]
+        else:
+            ax0 = hax
+            
+        if vax is not None:
+            ax1 = axdict[axes[1]]
+        else:
+            ax1 = vax
         
         # If creating a histogram like the X,Y,D plots
         if len(axes) == 3:
@@ -559,8 +572,12 @@ from cr39py.cr39 import *
 path = os.path.join('\\\expdiv','kodi','ShotData','104394', '104394_TIM2_PR2709_2h_s4.cpsa')
 obj = CR39(path, verbose=True)
 """
-        
-        
+
+
+if __name__ == '__main__':
+    data_dir = os.path.join("C:\\","Users","pvheu","Desktop","data_dir")
+    obj = CR39(103955, data_dir=data_dir, verbose=True)
+
         
         
         
