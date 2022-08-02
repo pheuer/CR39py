@@ -448,32 +448,30 @@ class CR39:
             
 
         """
-        
-        # TODO: actually implement this
-        """
+
+        valid_cuts = list(np.arange(len(self.cuts)))
         if subset is None:
-            subset = list(np.arange(len(self.cuts)))
+            subset = valid_cuts
         else:
-            if isinstance(subset, int):
-                subset = [subset,]
-            if any(s > len(self.cuts)-1 for s in self.cuts):
-                raise ValueError("Specified list of cuts is invalid")
-        """
+            for s in subset:
+                if s not in valid_cuts:
+                    raise ValueError(f"Specified cut index is invalid: {s}")
+        subset = list(subset)                 
+                    
 
-        self.trackdata = np.copy(self.raw_trackdata)
 
-        for cut in self.cuts:
-            # Find which tracks satisfy this cut
-            keep = cut.test(self.trackdata, invert=invert)
-            # Keep only those tracks
-            self.trackdata = self.trackdata[keep, :]
+        for i, cut in enumerate(self.cuts):
+            if i in subset:
+                # Find which tracks satisfy this cut
+                keep = cut.test(self.trackdata, invert=invert)
+                # Keep only those tracks
+                self.trackdata = self.trackdata[keep, :]
             
             
     
     def cutcli(self):
         
         print("enter 'help' for a list of commands")
-        self.cutplot()
         
         while True:
             
@@ -482,11 +480,13 @@ class CR39:
                 print("No cuts set yet")
             else:
                 for i, cut in enumerate(self.cuts):
-                    print(cut)
+                    print(f"{i} : " + str(cut))
             
             print("add (a), delete (d), replace (r), plot (p), plot inverse (pi), help (help)")
             x = input(">")
             split = x.split(',')
+            split = [s.strip() for s in split] # Strip off any white space
+            print(split)
             x = split[0]
             
             if x == 'help':
@@ -512,6 +512,7 @@ class CR39:
                       )
                 
             elif x == 'end':
+                self.apply_cuts()
                 break
             
             
@@ -520,7 +521,7 @@ class CR39:
                 x2 = input(">")
                 split2 = x2.split(',')
                 split2 = [ s.split(':') for s in split2]
-                kwargs = {str(s[0]):float(s[1]) for s in split2}
+                kwargs = {str(s[0].strip()):float(s[1].strip()) for s in split2}
                 
                 #validate the keys are all correct
                 valid=True
@@ -529,30 +530,36 @@ class CR39:
                         print(f"Unrecognized key: {key}")
                         valid=False
                         
-
                 if valid:
                     c = Cut(**kwargs)
                     if x == 'r':
                         ind = int(split[1])
                         self.replace_cut(c, ind)
-                    
                     else:
                         self.add_cut(c)
+                        
+                        
+            elif x in ['p', 'pi']:
+                if x =='pi':
+                    invert=True
+                else:
+                    invert=False
+                    
+                if len(split)>1:
+                    subset = np.array(split[1:]).astype(np.int32)
+                else:
+                    subset=None
+                
+                self.apply_cuts(invert=invert, subset=subset)
+                self.cutplot()
+                
+                
                 
             
             
-            """
-            elif len(split)==2 and str(split[0]) in state.keys():
-                for key in state.keys():
-                    if str(split[0])==key:
-                        state[key] = float(split[1])
-                        
-                self.adjust(**state)
-                self.plot_with_data(xaxis, yaxis, data)
-                        
             else:
                 print(f"Invalid input: {x}")
-        """
+  
 
 
         
@@ -626,8 +633,8 @@ class CR39:
         
     def cutplot(self):
         
-        xax, yax, arr = self.frames()
-        fig, axarr = plt.subplots(nrows=2, ncols=2, figsize=(10,10))
+        xax, yax, arr = self.frames(trim=False)
+        fig, axarr = plt.subplots(nrows=2, ncols=2, figsize=(9,9))
         fig.subplots_adjust(hspace=0.3, wspace=0.3)
                 
         ax = axarr[0][0]
@@ -663,7 +670,8 @@ obj = CR39(path, verbose=True)
 if __name__ == '__main__':
     data_dir = os.path.join("C:\\","Users","pvheu","Desktop","data_dir")
     obj = CR39(103955, data_dir=data_dir, verbose=True)
-
+    obj.add_cut(Cut(xmax=0, dmax=15))
+    obj.add_cut(Cut(cmax=40))
         
         
         
