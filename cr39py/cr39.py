@@ -456,12 +456,14 @@ class CR39:
             for s in subset:
                 if s not in valid_cuts:
                     raise ValueError(f"Specified cut index is invalid: {s}")
-        subset = list(subset)                 
+        subset = list(subset)    
+
+        self.trackdata = np.copy(self.raw_trackdata)             
                     
-
-
+        print(f"Subset {subset}")
         for i, cut in enumerate(self.cuts):
             if i in subset:
+                print(f"Applying cut {i}")
                 # Find which tracks satisfy this cut
                 keep = cut.test(self.trackdata, invert=invert)
                 # Keep only those tracks
