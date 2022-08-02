@@ -9,6 +9,7 @@ import numpy as np
 
 from collections import namedtuple
 
+from fast_histogram import histogram2d
 import matplotlib.pyplot as plt
 
 from cr39py.util.misc import find_file
@@ -41,16 +42,21 @@ class Cut:
                      'cmin':cmin, 'cmax':cmax,
                      'emin':emin, 'emax':emax}
 
-
-    def __getattr__(self, item):
+    def __getattr__(self, key):
         
-        if item in self.dict.keys():
-            if self.dict[item] is None:
-                return self.defaults[item]
+        if key in self.dict.keys():
+            if self.dict[key] is None:
+                return self.defaults[key]
             else:
-                return self.dict[item]
+                return self.dict[key]
         else:
-            raise ValueError(f"Unknown attribute for Cut: {item}")
+            raise ValueError(f"Unknown attribute for Cut: {key}")
+            
+            
+            
+    def empty(self):
+        return all(v is None for k,v in self.dict.items())
+            
             
             
     def __str__(self):
@@ -59,28 +65,96 @@ class Cut:
         return s
     
     
-    def test (self, trackdata, invert=False):
+    def test (self, trackdata):
         """
-        Given tracks, calculates the indices that satisfy this test
+        Given tracks, return a boolean array representing which tracks
+        fall within this cut
         """
         ntracks, _ = trackdata.shape
         keep = np.ones(ntracks).astype('bool')
+
         for key in self.dict.keys():
             if self.dict[key] is not None:
                 i = self.indices[key]
                 if 'min' in key:
-                    x = np.greater(trackdata[:, i], getattr(self, key))
+                    keep *= np.greater(trackdata[:, i], getattr(self, key))
                 else:
-                    x = np.less(trackdata[:, i], getattr(self, key))
-                   
-                if invert:
-                    keep *= ~x
-                else:
-                    keep *= x
-        return keep
+                    keep *= np.less(trackdata[:, i], getattr(self, key))      
+        
+        # Return a 1 for every track that is in the cut
+        return keep.astype(bool)
         
         
         
+        
+        
+def _cli_input(mode='alphanumeric list'):
+    """
+    Collects CLI input from the user: continues asking until a valid
+    input has been provided. Input modes: 
+        
+    'numeric'
+        Single number
+        
+    'alphanumeric list'
+        List of alphanumeric characters, separated by commas    
+    
+    'key:value list' -> e.g. xmin:10, ymin:-1
+        Alternating alpha and numeric key value pairs, comma separated
+        Letters are only acceptable in the values if they are 'none'
+    """
+    integers = set('123456790+-')
+    floats = integers.union(".e")
+    alphas = set('abcdefghijklmnopqrstuvwxyz')
+
+    while True:
+        x = str(input(">"))
+        
+        if mode=='integer':
+            if x in integers:
+                return x
+
+        elif mode=='alpha-integer list':
+            split = x.split(',')
+            split = [s.strip() for s in split]
+            # Discard empty strings
+            split = [s for s in split if s!='']
+            if all([set(s).issubset( alphas.union(integers)) for s in split ]):
+                return split
+                              
+        elif mode == 'key:value list':
+            split = x.split(',')
+            split = [ s.split(':') for s in split]
+            
+            # Verify that we have a list of at least one pair, and only pairs
+            if all([len(s)==2 for s in split]) and len(split)>0:
+                # Discard empty strings
+                split = [s for s in split if (s[0]!='' and s[1]!='')]
+                
+                # Transform any 'none' values into None
+                # Strip any other values
+                for i, s in enumerate(split):
+                    if str(s[1]).lower() == 'none':
+                        split[i][1] = None
+                    else:
+                        split[i][1] = s[1].strip()
+                
+                # Test that values are in the correct sets
+                test1 = all([(
+                            (set(s[0].strip()).issubset(alphas)) and
+                             (s[1] is None or set(s[1]).issubset(floats))
+                             )
+                             for s in split])
+                
+                # Convert any non-None values into floats
+                for i, s in enumerate(split):
+                    if s[1] is not None:
+                        split[i][1] = float(s[1])
+                
+                if all([test1,]):
+                    return {str(s[0].strip()):s[1] for s in split}
+        else:
+            raise ValueError("Invalid Mode")
         
                         
 
@@ -90,16 +164,29 @@ class CR39:
     axes_ind = {'X':0, 'Y':1, 'D':2, 'C':3, 'E':5}
     ind_axes = ['X', 'Y', 'D', 'C', 'E']
     
-    def __init__(self, *args, verbose=False, data_dir=None):
+    def __init__(self, *args, verbose=False, data_dir=None, domain=None):
         
         """
         arg : path or int
         
             Either a shot number or a filepath directly to the data file
+            
+        domain : Cut
+            A Cut that is interpreted as inclusive, e.g. sets the domain for 
+            the remainder of the 
+            
         """
         self.verbose = verbose
         
         self.cuts = []
+        if domain is not None:
+            self.set_domain(domain)
+        else:
+            self.domain=None
+
+        # Store figures once created for blitting
+        self.plotfig = None
+        self.cutplotfig = None
         
 
         # If the first argument is a file path, load the file directly
@@ -225,7 +312,6 @@ class CR39:
                 self.xax[fh.x_ind] = fh.xpos*1e-5
                 self.yax[fh.y_ind] = fh.ypos*1e-5
    
-                
                 # Increment the counters for the number of hits
                 tot_hits += fh.hits
                 cum_hits = np.append(cum_hits, tot_hits)
@@ -364,20 +450,20 @@ class CR39:
             weights = None
         
         
-        arr, xedges, yedges = np.histogram2d(self.trackdata[:,i0],
-                                             self.trackdata[:,i1],
-                                             bins=[ax0, ax1], weights=weights)
-        
-        # Calculate the bin centers
-        xax =0.5*(xedges[:-1] + xedges[1:])
-        yax =0.5*(yedges[:-1] + yedges[1:]) 
+        rng = [(np.min(ax0), np.max(ax0)), (np.min(ax1), np.max(ax1))]
+        bins = [ax0.size, ax1.size]
+
+        xax = np.linspace(rng[0][0], rng[0][1], num=bins[0])
+        yax = np.linspace(rng[1][0], rng[1][1], num=bins[1])
+        arr = histogram2d(self.trackdata[:,i0],self.trackdata[:,i1],
+                          bins=bins, range=rng, weights=weights)
         
 
         # Create the unweighted histogram and divide by it (sans zeros)
         if len(axes)==3:
-            arr_uw, _, _ = np.histogram2d(self.trackdata[:,i0],
-                                             self.trackdata[:,i1],
-                                             bins=[ax0, ax1])
+            arr_uw = histogram2d(self.trackdata[:,i0],
+                                    self.trackdata[:,i1],
+                                    bins=bins, range=rng)
             nz = np.nonzero(arr_uw)
             arr[nz] = arr[nz]/arr_uw[nz]
             
@@ -412,6 +498,15 @@ class CR39:
         self.raw_trackdata[:, 1] *= -1
         self.trackdata[:, 1] *= -1
         self.plot()
+        
+        
+        
+    def set_domain(self, cut):
+        """
+        Sets the domain cut: an inclusive cut that will not be inverted
+        """
+        self.domain = cut
+        
     
     
     def add_cut(self, c):
@@ -458,25 +553,41 @@ class CR39:
                     raise ValueError(f"Specified cut index is invalid: {s}")
         subset = list(subset)    
 
-        keep = np.ones(self.ntracks).astype(bool)         
-                    
-        print(f"Subset {subset}")
+        keep = np.ones(self.ntracks).astype(bool)   
+        
         for i, cut in enumerate(self.cuts):
             if i in subset:
                 print(f"Applying cut {i}")
-                # Find which tracks satisfy this cut
-                keep = keep*cut.test(self.trackdata, invert=invert)
-                # Keep only those tracks
-        
+                
+                # Get a boolean array of tracks that are inside this cut
+                x = cut.test(self.raw_trackdata)
+                
+                # negate to get a list of tracks that are NOT
+                # in the excluded region (unless we are inverting)
+                if not invert:
+                    x = np.logical_not(x)
+                    
+                keep *= x
+                
+        # Regardless of anything else, only show tracks that are within
+        # the domain
+        if self.domain is not None:
+            keep *= self.domain.test(self.raw_trackdata)
+                
         self.trackdata = self.raw_trackdata[keep, :]
             
             
     
     def cutcli(self):
-        
         print("enter 'help' for a list of commands")
         
         while True:
+            
+            print("Domain:")
+            if self.domain is None:
+                print("No domain set: default is the full dataset")
+            else:
+                print(str(self.domain))
             
             print("Current cuts:")
             if len(self.cuts) == 0:
@@ -485,11 +596,9 @@ class CR39:
                 for i, cut in enumerate(self.cuts):
                     print(f"{i} : " + str(cut))
             
-            print("add (a), delete (d), replace (r), plot (p), plot inverse (pi), help (help)")
-            x = input(">")
-            split = x.split(',')
-            split = [s.strip() for s in split] # Strip off any white space
-            print(split)
+            print("add (a), delete (d), replace (r), plot (plot), "
+                  "plot inverse (ploti), help (help)")
+            split = _cli_input(mode='alpha-integer list')
             x = split[0]
             
             if x == 'help':
@@ -502,12 +611,13 @@ class CR39:
                       "'d' -> delete an existing cut\n"
                       "Arguments are numbers of cuts to delete\n"
                       "'r' -> replace an existing cut\n"
-                      "'p' -> plot the image with current cuts\n"
+                      "'plot' -> plot the image with current cuts\n"
                       "Arguments are numbers of cuts to include in plot\n"
                       "The default is to include all of the current cuts\n"
-                      "'pi' -> plot the image with INVERSE of the cuts\n"
+                      "'ploti' -> plot the image with INVERSE of the cuts\n"
                       "Arguments are numbers of cuts to include in plot\n"
                       "The default is to include all of the current cuts\n"
+                      "Inclusive cuts (exclusive=False) will not be inverted!\n"
                       "\n"
                       " ** Cut keywords ** \n"
                       "xmin, xmax, ymin, ymax, dmin, dmax, cmin, cmax, emin, emax\n"
@@ -516,20 +626,17 @@ class CR39:
                 
             elif x == 'end':
                 self.apply_cuts()
+                self.cutplot()
                 break
             
-            
-            elif x in ['a', 'r']:
+            elif x == 'a':
                 print("Enter new cut parameters as key:value pairs separated by commas")
-                x2 = input(">")
-                split2 = x2.split(',')
-                split2 = [ s.split(':') for s in split2]
-                kwargs = {str(s[0].strip()):float(s[1].strip()) for s in split2}
+                kwargs = _cli_input(mode='key:value list')
                 
-                #validate the keys are all correct
+                #validate the keys are all valid dictionary keys
                 valid=True
                 for key in kwargs.keys():
-                    if key not in list(Cut.indices.keys()):
+                    if key not in list(Cut.defaults.keys()):
                         print(f"Unrecognized key: {key}")
                         valid=False
                         
@@ -537,13 +644,37 @@ class CR39:
                     c = Cut(**kwargs)
                     if x == 'r':
                         ind = int(split[1])
-                        self.replace_cut(c, ind)
+                        self.replace_cut(ind, c)
                     else:
                         self.add_cut(c)
                         
+                self.apply_cuts()
+                self.cutplot()
                         
-            elif x in ['p', 'pi']:
-                if x =='pi':
+            elif x == 'r':
+                if len(split)>1:
+                    ind = int(split[1])
+                    
+                    print(f"Selected cut ({ind}) : " + str(self.cuts[ind]))
+                    print("Enter a list key:value pairs with which to modify this cut"
+                          "(set a key to 'None' to remove it)")
+                    
+                    kwargs = _cli_input(mode='key:value list')
+                    for key in kwargs.keys():
+                        if str(kwargs[key]).lower() == 'none':
+                            self.cuts[ind].dict[key] = None
+                        else:
+                            self.cuts[ind].dict[key] = float(kwargs[key])
+                            
+                    self.apply_cuts()
+                    self.cutplot()
+                else:
+                    print("Specify the number of the cut you want to modify "
+                          "as an argument after the command.")
+                        
+                        
+            elif x in ['plot', 'ploti']:
+                if x =='ploti':
                     invert=True
                 else:
                     invert=False
@@ -555,19 +686,23 @@ class CR39:
                 
                 self.apply_cuts(invert=invert, subset=subset)
                 self.cutplot()
+
+            elif x == 'd':
+                if len(split)>1:
+                    for i in split[1:]:
+                        print(f"Removing cut {int(i)}")
+                        self.remove_cut(int(i))
+                else:
+                    print("Specify which cuts to remove as arguments after the command.")
                 
-                
-                
-            
-            
+
             else:
                 print(f"Invalid input: {x}")
+                
   
-
-
-        
-    def plot(self, axes=('X', 'Y'), log=False, figax=None, 
-             xrange=None, yrange=None, zrange=None):
+    def plot(self, axes=('X', 'Y'), log=False, clear=False, 
+             xrange=None, yrange=None, zrange=None, show=True,
+             figax = None):
         """
         Plots a histogram of the track data
         
@@ -579,11 +714,16 @@ class CR39:
         ticksize=14
         
         xax, yax, arr = self.frames(axes=axes)
-        
-        if figax is None:
-            fig, ax = plt.subplots()
-        else:
+
+        # If a figure and axis are provided, use those
+        if figax is not None:
             fig, ax = figax
+        elif self.plotfig is None or clear:
+            fig = plt.figure()
+            ax = fig.add_subplot()
+            self.plotfig = [fig, ax]
+        else:
+            fig, ax = self.plotfig
         
         if axes[0:2] == ('X', 'Y'):
             ax.set_aspect('equal')
@@ -602,10 +742,8 @@ class CR39:
         else:
             title += ' (lin)'
             
-            
         arr[arr==0] = np.nan
             
-
         if xrange is None:
             xrange = (np.nanmin(xax), np.nanmax(xax))
         if yrange is None:
@@ -615,44 +753,54 @@ class CR39:
 
         ax.set_xlim(xrange)
         ax.set_ylim(yrange)
-        
-        
 
-        p = ax.pcolormesh(xax, yax, arr.T, vmin=zrange[0], vmax=zrange[1])
+        ax.set_xlabel(axes[0], fontsize=fontsize)
+        ax.set_ylabel(axes[1], fontsize=fontsize)
+        ax.set_title(title, fontsize=fontsize)
+        
+        p = ax.pcolorfast(xax, yax, arr.T, vmin=zrange[0], vmax=zrange[1])
         
         cb_kwargs = {'orientation':'vertical', 'pad':0.07, 'shrink':0.8, 'aspect':16}
         cbar= fig.colorbar(p, ax=ax, **cb_kwargs)
         cbar.set_label(ztitle, fontsize=fontsize)
         
-        ax.set_xlabel(axes[0], fontsize=fontsize)
-        ax.set_ylabel(axes[1], fontsize=fontsize)
-        ax.set_title(title, fontsize=fontsize)
         
-        if figax is None:
+        
+        
+        if show:
             plt.show()
             
         return fig, ax
         
         
-    def cutplot(self):
+    def cutplot(self, clear=False):
         
-        xax, yax, arr = self.frames(trim=False)
-        fig, axarr = plt.subplots(nrows=2, ncols=2, figsize=(9,9))
-        fig.subplots_adjust(hspace=0.3, wspace=0.3)
+
+        self.cutplotfig = plt.subplots(nrows=2, ncols=2, figsize=(9,9))
+        self.cutplotfig[0].subplots_adjust(hspace=0.3, wspace=0.3)
+        
+        # Figure tuple contains: 
+        # (fig, axarr, bkg)
+        fig, axarr = self.cutplotfig
                 
+        # X, Y
         ax = axarr[0][0]
-        self.plot(axes=('X', 'Y'), figax=(fig, ax))
+        self.plot(axes=('X', 'Y'), show=False, figax = (fig, ax))
         
+        # D, C
         ax = axarr[0][1]
-        self.plot(axes=('D', 'C'), figax=(fig, ax),
+        self.plot(axes=('D', 'C'), show=False, figax = (fig, ax),
                    log=True)
         
+        # X, Y, D
         ax = axarr[1][0]
-        self.plot(axes=('X', 'Y', 'D'), figax=(fig, ax),
+        self.plot(axes=('X', 'Y', 'D'), show=False, figax = (fig, ax),
                    zrange=(1, 7))
         
+        
+        # D, E
         ax = axarr[1][1]
-        self.plot(axes=('D', 'E'), figax=(fig, ax),
+        self.plot(axes=('D', 'E'),  show=False, figax = (fig, ax),
                    log=True)
         
         plt.show()
@@ -671,10 +819,18 @@ obj = CR39(path, verbose=True)
 
 
 if __name__ == '__main__':
-    data_dir = os.path.join("C:\\","Users","pvheu","Desktop","data_dir")
-    obj = CR39(103955, data_dir=data_dir, verbose=True)
-    obj.add_cut(Cut(xmax=0, dmax=15))
-    obj.add_cut(Cut(cmax=40))
+    
+    #data_dir = os.path.join("C:\\","Users","pvheu","Desktop","data_dir")
+    #data_dir = os.path.join('//expdiv','kodi','ShotData')
+    data_dir = os.path.join('\\\profiles','Users$','pheu','Desktop','data_dir')
+    
+    domain = Cut(xmin=-5, xmax=0)
+    obj = CR39(103955, data_dir=data_dir, verbose=True, domain=domain)
+    
+    obj.add_cut(Cut(cmin=40))
+    
+
+    obj.cutcli()
         
         
         
