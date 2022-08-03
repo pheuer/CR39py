@@ -181,8 +181,8 @@ def _cli_input(mode='alphanumeric list'):
 class CR39:
 
     # Axes dictionary for trackdata
-    axes_ind = {'X':0, 'Y':1, 'D':2, 'C':3, 'E':5}
-    ind_axes = ['X', 'Y', 'D', 'C', 'E']
+    axes_ind = {'X':0, 'Y':1, 'D':2, 'C':3, 'E':5, 'Z':6}
+    ind_axes = ['X', 'Y', 'D', 'C', 'E', 'Z']
     
     def __init__(self, *args, verbose=False, data_dir=None, domain=None):
         
@@ -345,11 +345,12 @@ class CR39:
                 # 4) avg contrast (uint)
                 # 5) x pos (int16) in units of 1e-4*pix_size
                 # 6) y pos (int16) in units of 1e-4*pix_size
+                # 7) z pos (int16) in units of 1e-2*pix_size (??)
                 #
                 # The x and y pos are relative to the upper right corner 
                 # of the current frame
                 
-                t= np.zeros([fh.hits, 6])
+                t= np.zeros([fh.hits, 7])
                 if fh.hits > 0:
                     
                     # Diameters
@@ -379,6 +380,9 @@ class CR39:
                                           dtype='int16')*self.pix_size*1e-4
                                + fh.ypos*1e-5
                                - (self.fy/2)*1e-4 )
+                    
+                    # z position, microns
+                    t[:, 6] = fh.zpos*self.pix_size*1e-2
     
                     
                 tracks.append(t)
@@ -397,7 +401,7 @@ class CR39:
         # 5) ecentricity
     
         # Re-shape the track data into a list of every track
-        self.trackdata = np.zeros([tot_hits, 6])
+        self.trackdata = np.zeros([tot_hits, 7])
         for i in range(self.nframes):
             self.trackdata[cum_hits[i]:cum_hits[i+1], :] = tracks[i]
             
