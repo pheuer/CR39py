@@ -14,6 +14,9 @@ import matplotlib.pyplot as plt
 
 from cr39py.util.misc import find_file
 
+
+# Represents metadata from a single frame of cr39
+# used when reading CPSA files
 FrameHeader = namedtuple('FrameHeader', ['number', 'xpos', 'ypos', 
                                          'hits', 'BLENR', 'zpos', 
                                          'x_ind', 'y_ind'])
@@ -52,6 +55,23 @@ class Cut:
         else:
             raise ValueError(f"Unknown attribute for Cut: {key}")
             
+            
+    @property
+    def xrange(self):
+        return [self.dict['xmin'], self.dict['xmax']]
+    @property
+    def yrange(self):
+        return [self.dict['ymin'], self.dict['ymax']]
+    @property
+    def drange(self):
+        return [self.dict['dmin'], self.dict['dmax']]
+    @property
+    def crange(self):
+        return [self.dict['cmin'], self.dict['cmax']]
+    @property
+    def erange(self):
+        return [self.dict['emin'], self.dict['emax']]
+                
             
             
     def empty(self):
@@ -580,6 +600,8 @@ class CR39:
     
     def cutcli(self):
         print("enter 'help' for a list of commands")
+        self.apply_cuts()
+        self.cutplot()
         
         while True:
             
@@ -596,8 +618,8 @@ class CR39:
                 for i, cut in enumerate(self.cuts):
                     print(f"{i} : " + str(cut))
             
-            print("add (a), delete (d), replace (r), plot (plot), "
-                  "plot inverse (ploti), help (help)")
+            print("add (a), edit (e), edit the domain (d), remove (r), plot (p), "
+                  "plot inverse (pi), help (help)")
             split = _cli_input(mode='alpha-integer list')
             x = split[0]
             
@@ -605,20 +627,21 @@ class CR39:
                 print("Enter commands, followed by any additional arugments "
                       "separated by commas.\n"
                       " ** Commands ** \n"
+                      "'a' -> create a new cut\n"
+                      "'d' -> edit the domain\n"
+                      "'e' -> edit a cut\n"
+                      "Argument (one int) is the cut to edit\n"
+                      "'r' -> remove an existing cut\n"
+                      "Arguments are numbers of cuts to remove\n"
+                      "'p' -> plot the image with current cuts\n"
+                      "Arguments are numbers of cuts to include in plot\n"
+                      "The default is to include all of the current cuts\n"
+                      "'pi' -> plot the image with INVERSE of the cuts\n"
+                      "Arguments are numbers of cuts to include in plot\n"
+                      "The default is to include all of the current cuts\n"
                       "'help' -> print this documentation\n"
                       "'end' -> accept the current values\n"
-                      "'a' -> create a new cut\n"
-                      "'d' -> delete an existing cut\n"
-                      "Arguments are numbers of cuts to delete\n"
-                      "'r' -> replace an existing cut\n"
-                      "'plot' -> plot the image with current cuts\n"
-                      "Arguments are numbers of cuts to include in plot\n"
-                      "The default is to include all of the current cuts\n"
-                      "'ploti' -> plot the image with INVERSE of the cuts\n"
-                      "Arguments are numbers of cuts to include in plot\n"
-                      "The default is to include all of the current cuts\n"
-                      "Inclusive cuts (exclusive=False) will not be inverted!\n"
-                      "\n"
+
                       " ** Cut keywords ** \n"
                       "xmin, xmax, ymin, ymax, dmin, dmax, cmin, cmax, emin, emax\n"
                       "e.g. 'xmin:0,xmax:5,dmax=15'\n"
@@ -650,10 +673,25 @@ class CR39:
                         
                 self.apply_cuts()
                 self.cutplot()
+                
+            elif x == 'd':
+                print("Current domain: " + str(self.domain))
+                print("Enter a list key:value pairs with which to modify the domain"
+                      "(set a key to 'None' to remove it)")
+                kwargs = _cli_input(mode='key:value list')
+                for key in kwargs.keys():
+                    if str(kwargs[key]).lower() == 'none':
+                        self.domain.dict[key] = None
+                    else:
+                        self.domain.dict[key] = float(kwargs[key])
+                self.apply_cuts()
+                self.cutplot()
+ 
                         
-            elif x == 'r':
+            elif x == 'e':
                 if len(split)>1:
                     ind = int(split[1])
+                    cut = self.cuts[ind]
                     
                     print(f"Selected cut ({ind}) : " + str(self.cuts[ind]))
                     print("Enter a list key:value pairs with which to modify this cut"
@@ -673,8 +711,8 @@ class CR39:
                           "as an argument after the command.")
                         
                         
-            elif x in ['plot', 'ploti']:
-                if x =='ploti':
+            elif x in ['p', 'pi']:
+                if x =='pi':
                     invert=True
                 else:
                     invert=False
@@ -687,7 +725,7 @@ class CR39:
                 self.apply_cuts(invert=invert, subset=subset)
                 self.cutplot()
 
-            elif x == 'd':
+            elif x == 'r':
                 if len(split)>1:
                     for i in split[1:]:
                         print(f"Removing cut {int(i)}")
@@ -701,7 +739,8 @@ class CR39:
                 
   
     def plot(self, axes=('X', 'Y'), log=False, clear=False, 
-             xrange=None, yrange=None, zrange=None, show=True,
+             xrange=[None, None], yrange=[None, None], zrange=[None, None], 
+             show=True, trim=True,
              figax = None):
         """
         Plots a histogram of the track data
@@ -713,7 +752,7 @@ class CR39:
         fontsize=16
         ticksize=14
         
-        xax, yax, arr = self.frames(axes=axes)
+        xax, yax, arr = self.frames(axes=axes, trim=trim)
 
         # If a figure and axis are provided, use those
         if figax is not None:
@@ -735,30 +774,37 @@ class CR39:
             ztitle = '# Tracks'
             title = f"{axes[0]}, {axes[1]}"
             
+            
+        arr[arr==0] = np.nan
+            
+        # Calculate bounds
+        if xrange[0] is None:
+            xrange[0]  = np.nanmin(xax)
+        if xrange[1] is None:
+            xrange[1]  = np.nanmax(xax)
+        if yrange[0] is None:
+            yrange[0]  = np.nanmin(yax)
+        if yrange[1] is None:
+            yrange[1]  = np.nanmax(yax)
+
         if log:
             title += ' (log)'
             nonzero = np.nonzero(arr)
             arr[nonzero] = np.log10(arr[nonzero])
+
         else:
             title += ' (lin)'
             
-        arr[arr==0] = np.nan
-            
-        if xrange is None:
-            xrange = (np.nanmin(xax), np.nanmax(xax))
-        if yrange is None:
-            yrange = (np.nanmin(yax), np.nanmax(yax))
-        if zrange is None:
-            zrange = (np.nanmin(arr), np.nanmax(arr))
+        
 
-        ax.set_xlim(xrange)
-        ax.set_ylim(yrange)
+        ax.set_xlim(*xrange)
+        ax.set_ylim(*yrange)
 
         ax.set_xlabel(axes[0], fontsize=fontsize)
         ax.set_ylabel(axes[1], fontsize=fontsize)
         ax.set_title(title, fontsize=fontsize)
         
-        p = ax.pcolorfast(xax, yax, arr.T, vmin=zrange[0], vmax=zrange[1])
+        p = ax.pcolorfast(xax, yax, arr.T)
         
         cb_kwargs = {'orientation':'vertical', 'pad':0.07, 'shrink':0.8, 'aspect':16}
         cbar= fig.colorbar(p, ax=ax, **cb_kwargs)
@@ -785,23 +831,31 @@ class CR39:
                 
         # X, Y
         ax = axarr[0][0]
-        self.plot(axes=('X', 'Y'), show=False, figax = (fig, ax))
+        self.plot(axes=('X', 'Y'), show=False, trim=True, figax = (fig, ax),
+                  xrange=self.domain.xrange,
+                  yrange=self.domain.yrange)
         
         # D, C
         ax = axarr[0][1]
         self.plot(axes=('D', 'C'), show=False, figax = (fig, ax),
-                   log=True)
+                   log=True, trim=False,
+                   xrange=self.domain.drange,
+                   yrange=self.domain.crange)
         
         # X, Y, D
         ax = axarr[1][0]
-        self.plot(axes=('X', 'Y', 'D'), show=False, figax = (fig, ax),
-                   zrange=(1, 7))
+        self.plot(axes=('X', 'Y', 'D'), show=False, trim=False, figax = (fig, ax),
+                   xrange=self.domain.xrange,
+                   yrange=self.domain.yrange,
+                   zrange=self.domain.drange)
         
         
         # D, E
         ax = axarr[1][1]
-        self.plot(axes=('D', 'E'),  show=False, figax = (fig, ax),
-                   log=True)
+        self.plot(axes=('D', 'E'),  show=False, trim=True, figax = (fig, ax),
+                   log=True,
+                   xrange=self.domain.drange,
+                   yrange=self.domain.erange)
         
         plt.show()
         
@@ -820,14 +874,14 @@ obj = CR39(path, verbose=True)
 
 if __name__ == '__main__':
     
-    #data_dir = os.path.join("C:\\","Users","pvheu","Desktop","data_dir")
+    data_dir = os.path.join("C:\\","Users","pvheu","Desktop","data_dir")
     #data_dir = os.path.join('//expdiv','kodi','ShotData')
-    data_dir = os.path.join('\\\profiles','Users$','pheu','Desktop','data_dir')
+    #data_dir = os.path.join('\\\profiles','Users$','pheu','Desktop','data_dir')
     
     domain = Cut(xmin=-5, xmax=0)
     obj = CR39(103955, data_dir=data_dir, verbose=True, domain=domain)
     
-    obj.add_cut(Cut(cmin=40))
+    #obj.add_cut(Cut(cmin=40))
     
 
     obj.cutcli()
