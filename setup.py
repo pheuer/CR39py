@@ -16,6 +16,6 @@ setuptools.setup(
         "Bug Tracker": "https://github.com/pheuer/CR39py/issues"
     },
     license='MIT',
-    packages=['cr39py'],
+    packages=setuptools.find_packages(),
     install_requires=['numpy', 'h5py', 'matplotlib',],
 )
