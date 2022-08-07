@@ -122,8 +122,97 @@ def energy_from_diameter(diameter, etchtime, particle='D',
     return energy
 
 
+class Subset:
+    """
+    A subset of the track data. The subset is defined by a domain, a list
+    of cuts, and a number of diameter slices (Dslices). 
+    
+    Domain
+    ------
+    The domain is the area in parameter space the subset encompasses. This
+    could limit the subset to a region in space (e.g. x=[-5, 0]) or another
+    parameter (e.g. D=[0,20]). The domain is represented by a cut, but it is 
+    an inclusive rather than an exclusive cut.
+    
+    List of Cuts
+    ------------
+    The subset includes a list of cuts that are used to exclude tracks that
+    would otherwise be included in the domain.
+    
+    DSlices
+    ------
+    Track diameter is proportional to particle energy, so slicing the subset
+    into bins sorted by diameter sorts the tracks by diameter. Slices are 
+    created by equally partitioining the tracks in the subset into some
+    number of dslices. 
+    
+    """
+
+    def __init__(self, domain=None, ndslices=None):
+        self.cuts = []
+        
+        if domain is not None:
+            self.set_domain(domain)
+        # If no domain is set, set it with an empty cut
+        else:
+            self.domain = Cut()
+            
+        if ndslices is None:
+            self.ndslices = 1
+        else:
+            self.set_ndslices(ndslices)
+            
+            
+    def __str__(self):
+        s = ''
+        s += "Domain:" + str(self.domain) + '\n'
+        s += "Current cuts:\n"
+        if len(self.cuts) == 0:
+            s+= "No cuts set yet\n"
+        else:
+            for i,cut in enumerate(self.cuts):
+                s += f"Cut {i}: {str(cut)}\n"
+        return s
+            
+
+            
+    def set_domain(self, cut):
+        """
+        Sets the domain cut: an inclusive cut that will not be inverted
+        """
+        self.domain = cut
+        
+    def set_ndslices(self, ndslices):
+        """
+        Sets the number of ndslices
+        """
+        self.ndslices = ndslices
+        
+    def add_cut(self, c):
+        self.cuts.append(c)
+           
+    def remove_cut(self, i):
+        if i > len(self.cuts)-1:
+            print(f"Cannot remove the {i} cut, there are only "
+                             f"{len(self.cuts)} cuts.")
+        else:
+            self.cuts.pop(i)
+        
+    def replace_cut(self, i, c):
+        if i > len(self.cuts)-1:
+            print(f"Cannot replace the {i} cut, there are only "
+                             f"{len(self.cuts)} cuts.")
+        else:
+            self.cuts[i] = c
+
+
 
 class Cut:
+    """
+    A cut is series of upper and lower bounds on tracks that should be
+    excluded. 
+    """
+    
     defaults = {'xmin':-1e6, 'xmax':1e6, 'ymin':-1e6, 'ymax':1e6,
                 'dmin':0, 'dmax':1e6, 'cmin':0, 'cmax':1e6, 
                 'emin':0, 'emax':1e6}
@@ -182,7 +271,10 @@ class Cut:
     def __str__(self):
         s = [f"{key}:{val}" for key, val in self.dict.items() if val is not None ]
         s = ', '.join(s)
-        return s
+        if s == '':
+            return "[Empty cut]"
+        else:
+            return s
     
     
     def test (self, trackdata):
@@ -232,6 +324,10 @@ def _cli_input(mode='alphanumeric list'):
         
         if mode=='integer':
             if x in integers:
+                return x
+            
+        elif mode=='alpha-integer':
+            if x in integers.union(alphas):
                 return x
 
         elif mode=='alpha-integer list':
@@ -284,26 +380,27 @@ class CR39:
     axes_ind = {'X':0, 'Y':1, 'D':2, 'C':3, 'E':5, 'Z':6}
     ind_axes = ['X', 'Y', 'D', 'C', 'E', 'Z']
     
-    def __init__(self, *args, verbose=False, data_dir=None, domain=None):
+    def __init__(self, *args, verbose=False, data_dir=None, subsets=None):
         
         """
         arg : path or int
         
             Either a shot number or a filepath directly to the data file
             
-        domain : Cut
-            A Cut that is interpreted as inclusive, e.g. sets the domain for 
-            the remainder of the 
+        subsets : list of Subset objects
+            A list of subsets to attach to this piece
             
         """
         self.verbose = verbose
         
-        self.cuts = []
-        if domain is not None:
-            self.set_domain(domain)
+        if subsets is None:
+            self.subsets = [Subset(),]
         else:
-            self.domain=None
-
+            self.subsets = subsets
+        
+        # The index of the currently selected subset
+        self.subset_i = 0
+        
         # Store figures once created for blitting
         self.plotfig = None
         self.cutplotfig = None
@@ -325,6 +422,11 @@ class CR39:
     def _log(self, msg):
         if self.verbose:
             print(msg)
+            
+            
+    @property
+    def current_subset(self):
+        return self.subsets[self.subset_i]
             
             
     def _find_data(self, id, data_dir):
@@ -624,33 +726,54 @@ class CR39:
         self.plot()
         
         
-        
-    def set_domain(self, cut):
-        """
-        Sets the domain cut: an inclusive cut that will not be inverted
-        """
-        self.domain = cut
-        
-    
-    
+    # ***********************************************************
+    # Cut functions
+    # These all apply to the current subset and are just wrappers
+    # for the matching method on that class 
+    # ***********************************************************
     def add_cut(self, c):
-        self.cuts.append(c)
-           
+         self.current_subset.add_cut(c)
+            
     def remove_cut(self, i):
-        if i > len(self.cuts)-1:
-            raise ValueError(f"Cannot remove the {i} cut, there are only "
-                             f"{len(self.cuts)} cuts.")
-        self.cuts.pop(i)
-        
+        self.current_subset.remove_cut(i)
+
     def replace_cut(self, i, c):
-        self.cuts[i] = c
+         self.current_subset.replace_cut(i,c)
+           
+    # ***********************************************************
+    # Subset functions
+    # ***********************************************************
+    def select_subset(self, i):
+        if i > len(self.subsets)-1:
+            print(f"Cannot select the {i} subset, there are only "
+                             f"{len(self.subsets)} subsets.")
+        else:
+            self.subset_i = i
         
-    def print_cuts(self):
-        if len(self.cuts) == 0:
-            print("No cuts")
+    def add_subset(self, *args):
+        """
+        Add a new subset
         
-        for i,cut in enumerate(self.cuts):
-            print(f"Cut {i}: {str(cut)}")
+        If no arguement is given create an empty subset
+        
+        Otherwise, assume the argument is a subset
+        """
+        
+        if len(args)==1:
+            s = args[0]
+        else:
+            s= Subset()
+        self.subsets.append(s)
+        
+    def remove_subset(self, i):
+        if i > len(self.subsets)-1:
+            print(f"Cannot remove the {i} subset, there are only "
+                             f"{len(self.subsets)} subsets.")
+        else:
+            self.subsets.pop(i)
+
+    def replace_subset(self, i, sc):
+         self.subsets[i] = sc
         
         
     def apply_cuts(self, subset=None, invert=False):
@@ -668,7 +791,7 @@ class CR39:
 
         """
 
-        valid_cuts = list(np.arange(len(self.cuts)))
+        valid_cuts = list(np.arange(len(self.current_subset.cuts)))
         if subset is None:
             subset = valid_cuts
         else:
@@ -679,10 +802,8 @@ class CR39:
 
         keep = np.ones(self.ntracks).astype(bool)   
         
-        for i, cut in enumerate(self.cuts):
+        for i, cut in enumerate(self.current_subset.cuts):
             if i in subset:
-                print(f"Applying cut {i}")
-                
                 # Get a boolean array of tracks that are inside this cut
                 x = cut.test(self.raw_trackdata)
                 
@@ -690,13 +811,12 @@ class CR39:
                 # in the excluded region (unless we are inverting)
                 if not invert:
                     x = np.logical_not(x)
-                    
                 keep *= x
                 
         # Regardless of anything else, only show tracks that are within
         # the domain
-        if self.domain is not None:
-            keep *= self.domain.test(self.raw_trackdata)
+        if self.current_subset.domain is not None:
+            keep *= self.current_subset.domain.test(self.raw_trackdata)
                 
         self.trackdata = self.raw_trackdata[keep, :]
             
@@ -709,21 +829,13 @@ class CR39:
         
         while True:
             
-            print("Domain:")
-            if self.domain is None:
-                print("No domain set: default is the full dataset")
-            else:
-                print(str(self.domain))
-            
-            print("Current cuts:")
-            if len(self.cuts) == 0:
-                print("No cuts set yet")
-            else:
-                for i, cut in enumerate(self.cuts):
-                    print(f"{i} : " + str(cut))
+            print ("*********************************************************")
+            print(f"Current subset index: {self.subset_i} of {np.arange(len(self.subsets))}")
+            # Print a summary of the current subset
+            print(self.current_subset)
             
             print("add (a), edit (e), edit the domain (d), remove (r), plot (p), "
-                  "plot inverse (pi), help (help)")
+                  "plot inverse (pi), switch subsets (s), help (help)")
             split = _cli_input(mode='alpha-integer list')
             x = split[0]
             
@@ -735,14 +847,17 @@ class CR39:
                       "'d' -> edit the domain\n"
                       "'e' -> edit a cut\n"
                       "Argument (one int) is the cut to edit\n"
-                      "'r' -> remove an existing cut\n"
-                      "Arguments are numbers of cuts to remove\n"
                       "'p' -> plot the image with current cuts\n"
                       "Arguments are numbers of cuts to include in plot\n"
                       "The default is to include all of the current cuts\n"
                       "'pi' -> plot the image with INVERSE of the cuts\n"
                       "Arguments are numbers of cuts to include in plot\n"
                       "The default is to include all of the current cuts\n"
+                      "'r' -> remove an existing cut\n"
+                      "Arguments are numbers of cuts to remove\n"
+                      "'s' -> switch subsets or create a new subset\n"
+                      "Argument is the index of the subset to switch to, or"
+                      "'n' to create a new subset"
                       "'help' -> print this documentation\n"
                       "'end' -> accept the current values\n"
 
@@ -771,23 +886,23 @@ class CR39:
                     c = Cut(**kwargs)
                     if x == 'r':
                         ind = int(split[1])
-                        self.replace_cut(ind, c)
+                        self.current_subset.replace_cut(ind, c)
                     else:
-                        self.add_cut(c)
+                       self.current_subset.add_cut(c)
                         
                 self.apply_cuts()
                 self.cutplot()
                 
             elif x == 'd':
-                print("Current domain: " + str(self.domain))
+                print("Current domain: " + str(self.current_subset.domain))
                 print("Enter a list key:value pairs with which to modify the domain"
                       "(set a key to 'None' to remove it)")
                 kwargs = _cli_input(mode='key:value list')
                 for key in kwargs.keys():
                     if str(kwargs[key]).lower() == 'none':
-                        self.domain.dict[key] = None
+                        self.current_subset.domain.dict[key] = None
                     else:
-                        self.domain.dict[key] = float(kwargs[key])
+                        self.current_subset.domain.dict[key] = float(kwargs[key])
                 self.apply_cuts()
                 self.cutplot()
  
@@ -795,18 +910,18 @@ class CR39:
             elif x == 'e':
                 if len(split)>1:
                     ind = int(split[1])
-                    cut = self.cuts[ind]
+                    cut = self.current_subset.cuts[ind]
                     
-                    print(f"Selected cut ({ind}) : " + str(self.cuts[ind]))
+                    print(f"Selected cut ({ind}) : " + str(self.current_subset.cuts[ind]))
                     print("Enter a list key:value pairs with which to modify this cut"
                           "(set a key to 'None' to remove it)")
                     
                     kwargs = _cli_input(mode='key:value list')
                     for key in kwargs.keys():
                         if str(kwargs[key]).lower() == 'none':
-                            self.cuts[ind].dict[key] = None
+                            self.current_subset.cuts[ind].dict[key] = None
                         else:
-                            self.cuts[ind].dict[key] = float(kwargs[key])
+                            self.current_subset.cuts[ind].dict[key] = float(kwargs[key])
                             
                     self.apply_cuts()
                     self.cutplot()
@@ -833,11 +948,29 @@ class CR39:
                 if len(split)>1:
                     for i in split[1:]:
                         print(f"Removing cut {int(i)}")
-                        self.remove_cut(int(i))
+                        self.current_subset.remove_cut(int(i))
                 else:
                     print("Specify which cuts to remove as arguments after the command.")
+                    
+                    
+            elif x == 's':
+                if len(split)<2:
+                    print("Select the index of the subset to switch to, or"
+                          "enter 'n' to create a new subset.")
+                    ind = _cli_input(mode='alpha-integer')
+                else:
+                    ind = split[1]
+                    
+                if ind == 'n':
+                    ind = len(self.subsets)
+                    print(f"Creating a new subset, index {ind}")
+                    self.add_subset()
                 
-
+                print(f"Selecting subset {ind}")
+                self.select_subset(int(ind))
+                self.apply_cuts()
+                self.cutplot()
+                    
             else:
                 print(f"Invalid input: {x}")
                 
@@ -940,34 +1073,36 @@ class CR39:
         # Figure tuple contains: 
         # (fig, axarr, bkg)
         fig, axarr = self.cutplotfig
+        
+        fig.suptitle(f"Subset {self.subset_i}")
                 
         # X, Y
         ax = axarr[0][0]
         self.plot(axes=('X', 'Y'), show=False, trim=True, figax = (fig, ax),
-                  xrange=self.domain.xrange,
-                  yrange=self.domain.yrange)
+                  xrange=self.current_subset.domain.xrange,
+                  yrange=self.current_subset.domain.yrange)
         
         # D, C
         ax = axarr[0][1]
         self.plot(axes=('D', 'C'), show=False, figax = (fig, ax),
                    log=True, trim=False,
-                   xrange=self.domain.drange,
-                   yrange=self.domain.crange)
+                   xrange=self.current_subset.domain.drange,
+                   yrange=self.current_subset.domain.crange)
         
         # X, Y, D
         ax = axarr[1][0]
         self.plot(axes=('X', 'Y', 'D'), show=False, trim=False, figax = (fig, ax),
-                   xrange=self.domain.xrange,
-                   yrange=self.domain.yrange,
-                   zrange=self.domain.drange)
+                   xrange=self.current_subset.domain.xrange,
+                   yrange=self.current_subset.domain.yrange,
+                   zrange=self.current_subset.domain.drange)
         
         
         # D, E
         ax = axarr[1][1]
         self.plot(axes=('D', 'E'),  show=False, trim=True, figax = (fig, ax),
                    log=True,
-                   xrange=self.domain.drange,
-                   yrange=self.domain.erange)
+                   xrange=self.current_subset.domain.drange,
+                   yrange=self.current_subset.domain.erange)
         
         plt.show()
         
@@ -991,9 +1126,10 @@ if __name__ == '__main__':
     #data_dir = os.path.join('\\\profiles','Users$','pheu','Desktop','data_dir')
     
     domain = Cut(xmin=-5, xmax=0)
-    obj = CR39(103955, data_dir=data_dir, verbose=True, domain=domain)
+    subset = Subset(domain=domain)
+    obj = CR39(103955, data_dir=data_dir, verbose=True)
     
-    #obj.add_cut(Cut(cmin=40))
+    obj.add_cut(Cut(cmin=40))
     
 
     obj.cutcli()
