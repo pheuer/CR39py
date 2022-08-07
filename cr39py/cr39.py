@@ -361,6 +361,11 @@ class CR39:
             self.trackdata[cum_hits[i]:cum_hits[i+1], :] = tracks[i]
             
         self.ntracks = tot_hits
+        
+        # Sort the tracks by diameter for later slicing into energy dslices
+        isort = np.argsort(self.trackdata[:,2])
+        self.trackdata = self.trackdata[isort, :]
+        
         # Store all the tracks, as a starting point for making cuts on
         # self.trackdata
         self.raw_trackdata = np.copy(self.trackdata)
@@ -529,11 +534,11 @@ class CR39:
          self.subsets[i] = sc
         
         
-    def apply_cuts(self, subset=None, invert=False):
+    def apply_cuts(self, use_cuts=None, invert=False):
         """
         Apply cuts to the track data
         
-        subset : int, list of ints (optional)
+        use_cuts : int, list of ints (optional)
             If provided, only the cuts corresponding to the int or ints 
             provided will be applied. The default is to apply all cuts
             
@@ -545,18 +550,18 @@ class CR39:
         """
 
         valid_cuts = list(np.arange(len(self.current_subset.cuts)))
-        if subset is None:
-            subset = valid_cuts
+        if use_cuts is None:
+            use_cuts = valid_cuts
         else:
-            for s in subset:
+            for s in use_cuts:
                 if s not in valid_cuts:
                     raise ValueError(f"Specified cut index is invalid: {s}")
-        subset = list(subset)    
+        use_cuts = list(use_cuts)    
 
         keep = np.ones(self.ntracks).astype(bool)   
         
         for i, cut in enumerate(self.current_subset.cuts):
-            if i in subset:
+            if i in use_cuts:
                 # Get a boolean array of tracks that are inside this cut
                 x = cut.test(self.raw_trackdata)
                 
@@ -570,10 +575,24 @@ class CR39:
         # the domain
         if self.current_subset.domain is not None:
             keep *= self.current_subset.domain.test(self.raw_trackdata)
-                
+            
+        # Select only these tracks
         self.trackdata = self.raw_trackdata[keep, :]
-            
-            
+        
+        
+        # Calculate the bin edges for each dslice
+        # !! note that the tracks are already sorted into order by diameter
+        # when the CR39 data is read in
+        if self.current_subset.current_dslice is not None:
+            # Figure out the dslice width
+            dbin = int(self.trackdata.shape[0]/self.current_subset.ndslices)
+            # Extract the appropriate portion of the tracks
+            b0 = self.current_subset.current_dslice*dbin
+            b1 = b0 + dbin
+            self.trackdata = self.trackdata[b0:b1, :]
+
+        
+        
     
     def cli(self):
         print("enter 'help' for a list of commands")
@@ -588,7 +607,8 @@ class CR39:
             print(self.current_subset)
             
             print("add (a), edit (e), edit the domain (d), remove (r), plot (p), "
-                  "plot inverse (pi), switch subsets (s), help (help)")
+                  "plot inverse (pi), switch subsets (s), change dslices (c), "
+                  "change the number of dslices (n), help (help)")
             split = _cli_input(mode='alpha-integer list')
             x = split[0]
             
@@ -597,9 +617,13 @@ class CR39:
                       "separated by commas.\n"
                       " ** Commands ** \n"
                       "'a' -> create a new cut\n"
+                      "'c' -> Select a new dslice\n"
+                      "Argument (one int) is the index of the dslice to select"
+                      "Enter 'all' to select all"
                       "'d' -> edit the domain\n"
                       "'e' -> edit a cut\n"
                       "Argument (one int) is the cut to edit\n"
+                      "'n' -> Change the number of dslices on this subset."
                       "'p' -> plot the image with current cuts\n"
                       "Arguments are numbers of cuts to include in plot\n"
                       "The default is to include all of the current cuts\n"
@@ -610,7 +634,7 @@ class CR39:
                       "Arguments are numbers of cuts to remove\n"
                       "'s' -> switch subsets or create a new subset\n"
                       "Argument is the index of the subset to switch to, or"
-                      "'n' to create a new subset"
+                      "'new' to create a new subset"
                       "'help' -> print this documentation\n"
                       "'end' -> accept the current values\n"
 
@@ -645,6 +669,23 @@ class CR39:
                         
                 self.apply_cuts()
                 self.cutplot()
+                
+            elif x == 'c':
+                if len(split)<2:
+                    print("Select the index of the dslice to switch to, or"
+                          "enter 'all' to select all dslices")
+                    ind = _cli_input(mode='alpha-integer')
+                else:
+                    ind = split[1]
+                    
+                if ind == 'all':
+                    self.current_subset.set_current_dslice(None)
+                else:
+                    self.current_subset.set_current_dslice(int(ind))
+                self.apply_cuts()
+                self.cutplot()
+                    
+                    
                 
             elif x == 'd':
                 print("Current domain: " + str(self.current_subset.domain))
@@ -682,7 +723,16 @@ class CR39:
                     print("Specify the number of the cut you want to modify "
                           "as an argument after the command.")
                         
-                        
+            elif x == 'n':
+                if len(split)<2:
+                    print("Enter the requested number of dslices")
+                    ind = _cli_input(mode='alpha-integer')
+                else:
+                    ind = split[1]
+                    
+                self.current_subset.set_ndslices(int(ind))
+
+                    
             elif x in ['p', 'pi']:
                 if x =='pi':
                     invert=True
@@ -690,11 +740,11 @@ class CR39:
                     invert=False
                     
                 if len(split)>1:
-                    subset = np.array(split[1:]).astype(np.int32)
+                    use_cuts = np.array(split[1:]).astype(np.int32)
                 else:
-                    subset=None
+                    use_cuts=None
                 
-                self.apply_cuts(invert=invert, subset=subset)
+                self.apply_cuts(invert=invert, use_cuts=use_cuts)
                 self.cutplot()
 
             elif x == 'r':
@@ -709,12 +759,12 @@ class CR39:
             elif x == 's':
                 if len(split)<2:
                     print("Select the index of the subset to switch to, or"
-                          "enter 'n' to create a new subset.")
+                          "enter 'new' to create a new subset.")
                     ind = _cli_input(mode='alpha-integer')
                 else:
                     ind = split[1]
                     
-                if ind == 'n':
+                if ind == 'new':
                     ind = len(self.subsets)
                     print(f"Creating a new subset, index {ind}")
                     self.add_subset()
@@ -827,7 +877,12 @@ class CR39:
         # (fig, axarr, bkg)
         fig, axarr = self.cutplotfig
         
-        fig.suptitle(f"Subset {self.subset_i}")
+        title = f"Subset {self.subset_i}, "
+        if self.current_subset.current_dslice is None:
+            title += 'All dslices selected'
+        else:
+            title += f"dslice {self.current_subset.current_dslice} selected"
+        fig.suptitle(title)
                 
         # X, Y
         ax = axarr[0][0]
@@ -876,7 +931,7 @@ if __name__ == '__main__':
     subset = Subset(domain=domain)
     obj = CR39(103955, data_dir=data_dir, verbose=True)
     
-    obj.add_cut(Cut(cmin=40))
+    #obj.add_cut(Cut(cmin=40))
     
 
     obj.cli()

@@ -41,10 +41,16 @@ class Subset:
         else:
             self.domain = Cut()
             
+            
+        # By default, set the number of dslices to be 1
         if ndslices is None:
             self.ndslices = 1
         else:
             self.set_ndslices(ndslices)
+            
+        # Index of currently selected slice
+        # if None, include all slices
+        self.set_current_dslice(None)
             
             
     def __str__(self):
@@ -56,21 +62,38 @@ class Subset:
         else:
             for i,cut in enumerate(self.cuts):
                 s += f"Cut {i}: {str(cut)}\n"
+        s += f"Num. dslices: {self.ndslices} "
+        if self.current_dslice is None:
+            s += '[All dslices selected]\n'
+        else:
+            s += f"[Selected dslice index: {self.current_dslice}]\n"
+                
         return s
-            
-
-            
+               
     def set_domain(self, cut):
         """
         Sets the domain cut: an inclusive cut that will not be inverted
         """
         self.domain = cut
         
+    def set_current_dslice(self, i):
+        if i is None:
+            self.current_dslice = None
+        elif i > self.ndslices-1:
+            print(f"Cannot select the {i} dslice, there are only "
+                             f"{self.ndslices} dslices.")
+        else:
+            self.current_dslice = i
+        
     def set_ndslices(self, ndslices):
         """
         Sets the number of ndslices
         """
-        self.ndslices = ndslices
+        if not isinstance(ndslices, int) or ndslices < 0:
+            print("ndslices must be an integer > 0, but the provided value"
+                  f"was {ndslices}")
+        else:
+            self.ndslices = int(ndslices)
         
     def add_cut(self, c):
         self.cuts.append(c)
@@ -128,7 +151,8 @@ class Cut:
         else:
             raise ValueError(f"Unknown attribute for Cut: {key}")
             
-            
+        
+    # These range properties are used to set the range for plotting
     @property
     def xrange(self):
         return [self.dict['xmin'], self.dict['xmax']]
@@ -147,8 +171,8 @@ class Cut:
                 
             
             
-    def empty(self):
-        return all(v is None for k,v in self.dict.items())
+    #def empty(self):
+    #    return all(v is None for k,v in self.dict.items())
             
             
             
