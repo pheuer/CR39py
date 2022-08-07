@@ -2,7 +2,7 @@
 """
 @author: Peter Heuer
 
-Object representing a CR39 dataset
+Adapted in part from code written by Hans Rinderknecht
 """
 import os
 import numpy as np
@@ -20,6 +20,106 @@ from cr39py.util.misc import find_file
 FrameHeader = namedtuple('FrameHeader', ['number', 'xpos', 'ypos', 
                                          'hits', 'BLENR', 'zpos', 
                                          'x_ind', 'y_ind'])
+
+
+
+
+def energy_from_diameter(diameter, etchtime, particle='D',
+                         V_bulk=None, 
+                         k=None, n=None):
+    """
+    Estimate the energy of particle that created a particle track based on
+    its diameter 
+    
+    
+    Parameters
+    ----------
+    
+    diameter : np.ndarray
+        Track diameters in um
+        
+    etchtime : float
+        Etch time in hours
+        
+    particle : str
+        One of: 
+            'P' -> proton
+            'D' -> deuteron
+            'T' -> triton
+        
+        Default is 'D'
+        
+    V_bulk : float
+        Emperical constant. Default value is 2.66 um/hr
+        
+    k : float
+        Emperical constant. Default value is the mean of the data in Table
+        III : k = 0.782
+        
+    n : float
+        Emperical constant. Default value is the mean of the data in Table
+        III : n = 1.241
+        
+        
+    Returns
+    -------
+    
+    E : np.ndarray
+        Energy in MeV
+    
+    
+    Notes
+    -----
+    Lahmann, et al., RSI 91, 053502 (2020)
+    2-parameter model for CR-39 D(E): 
+     D(E) = 2*time_hr*V_bulk/(1+k*(E_MeV/Z^2/A)^n)  (Eq. 5)
+     
+    Which, inverted for E_MeV, gives
+    
+    E_MeV = Z^2 A [ (2*time_hr*V_bulk/D -1)/k]^(1/n)
+    
+    Typical values for (k, n) actually vary with etch time...
+    From Table III, for CPS2 deuteron data:
+       time    k       n 
+       2.0 hr  0.868   1.322
+       3.0 hr  0.809   1.103
+       3.0 hr  0.781   1.198
+       3.0 hr  0.671   1.340
+    Given all this, about the best we can do is take typical
+    values and know that a given piece will have variation.
+    From simulations (matched to typical values)
+       time    k       n
+       1 hr    0.894   1.343
+       3 hr    0.829   1.413
+       5 hr    0.769   1.467
+    
+    """
+    
+    if V_bulk is None:
+        V_bulk = 2.66
+        
+    if k is None:
+        k = 0.782
+        
+    if n is None:
+        n = 1.241
+        
+    if particle.lower() == 'p':
+        Z=1
+        A=1
+    elif particle.lower() == 'd':
+        Z=1
+        A=2
+    elif particle.lower() == 't':
+        Z=1
+        A=3
+    else:
+        raise ValueError("Particle must be one of ['D', 'T'], but provided "
+                         f"value was {particle}")
+        
+    energy = Z**2*A*((2*etchtime*V_bulk/diameter - 1)/k)**(1/n)
+    
+    return energy
 
 
 
