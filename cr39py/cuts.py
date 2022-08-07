@@ -5,11 +5,23 @@ Classes fod cuts and subsets of CR39 data
 @author: pvheu
 """
 import numpy as np
+import h5py
 
 class Subset:
     """
     A subset of the track data. The subset is defined by a domain, a list
     of cuts, and a number of diameter slices (Dslices). 
+    
+    Paramters
+    ---------
+    
+    grp : h5py.Group or string file path
+        An h5py Group or file path to an h5py file from which to 
+        load the subset
+    
+    
+    Notes
+    -----
     
     Domain
     ------
@@ -32,7 +44,7 @@ class Subset:
     
     """
 
-    def __init__(self, domain=None, ndslices=None):
+    def __init__(self, *args, domain=None, ndslices=None):
         self.cuts = []
         
         if domain is not None:
@@ -51,7 +63,88 @@ class Subset:
         # Index of currently selected slice
         # if None, include all slices
         self.set_current_dslice(None)
+        
+        # If an argument is provided, load the cut from that 
+        if len(args)>0:
+            if isinstance(args[0], h5py.Group):
+                self.load(args[0])
+            # If not an h5py.Group, assume it is a file path to one
+            elif isinstance(args[0], str):
+                with h5py.File(args[0], 'r') as f:
+                    self.load(f)
+                    
+    
+    def save(self, grp):
+           """
+           Save the data about this subset into an h5 group
+           
+           grp : h5py.Group or path string
+               The location to save the h5 data. This could be the root group
+               of its own h5 file, or a group within a larger h5 file.
+               
+               If a string is provided instead of a group, try to open it as
+               an h5 file and create the group there
+           
+           """
+           if isinstance(grp, str):
+               with h5py.File(grp, 'w') as f:
+                   self._save(f)
+           else:
+               self._save(grp)
+               
+    def _save(self, grp):
+           """
+           See docstring for "save"
+           """
+           grp.attrs['ndslices'] = self.ndslices
+           if self.current_dslice is None:
+               grp.attrs['current_dslice'] = np.nan
+           else:
+               grp.attrs['current_dslice'] = self.current_dslice
+               
+           # Save the domain as a cut
+           domain_grp = grp.create_group('domain')
+           self.domain.save(domain_grp)
+           
+           cuts_grp = grp.create_group('cuts')
+           for i, cut in enumerate(self.cuts):
+               c_grp = cuts_grp.create_group(f"cut_{i}")
+               cut.save(c_grp)
+
+       
+    def load(self, grp):
+           """
+           Load this cut from an h5 group
+           
+           grp : h5py.Group 
+               The location from which to load the h5 data. This could be the 
+               root group of its own h5 file, or a group within a larger h5 file.
+           
+           """
+           if isinstance(grp, str):
+               with h5py.File(grp, 'r') as f:
+                   self._load(f)
+           else:
+               self._load(grp)
+                
+                        
+    def _load(self, grp):
+        """
+        See documentation for 'load'
+        """
+        self.ndslices = int(grp.attrs['ndslices'])
+        if np.isnan(grp.attrs['current_dslice']):
+            self.current_dslice = None
+        else:
+            self.current_dslice = grp.attrs['current_dslice']
             
+        # Load the domain
+        self.domain = Cut(grp['domain'])
+        
+        # Load the cuts
+        cuts_grp = grp["cuts"]
+        for key in cuts_grp:
+            self.cuts.append( Cut(cuts_grp[key]) )
             
     def __str__(self):
         s = ''
@@ -118,6 +211,15 @@ class Cut:
     """
     A cut is series of upper and lower bounds on tracks that should be
     excluded. 
+    
+    Parameters
+    ----------
+    
+    grp : h5py.Group or string file path
+        An h5py Group or file path to an h5py file from which to 
+        load the cut
+    
+    
     """
     
     defaults = {'xmin':-1e6, 'xmax':1e6, 'ymin':-1e6, 'ymax':1e6,
@@ -129,17 +231,89 @@ class Cut:
                 'emin':5, 'emax':5}
 
     
-    def __init__(self,  xmin : float = None, xmax : float = None,
+    def __init__(self,  *args,
+                        xmin : float = None, xmax : float = None,
                         ymin : float = None, ymax : float = None,
                         dmin : float = None, dmax : float = None,
                         cmin : float = None, cmax : float = None,
                         emin : float = None, emax : float = None):
+        
+        
         
         self.dict = {'xmin':xmin, 'xmax':xmax,
                      'ymin':ymin, 'ymax':ymax,
                      'dmin':dmin, 'dmax':dmax,
                      'cmin':cmin, 'cmax':cmax,
                      'emin':emin, 'emax':emax}
+        
+        # If an argument is provided, load the cut from that 
+        if len(args)>0:
+            if isinstance(args[0], h5py.Group):
+                self.load(args[0])
+            # If not an h5py.Group, assume it is a file path to one
+            elif isinstance(args[0], str):
+                with h5py.File(args[0], 'r') as f:
+                    self.load(f)
+            
+    
+            
+        
+    def save(self, grp):
+        """
+        Save the data about this cut into an h5 group
+        
+        grp : h5py.Group or path string
+            The location to save the h5 data. This could be the root group
+            of its own h5 file, or a group within a larger h5 file.
+            
+            If a string is provided instead of a group, try to open it as
+            an h5 file and create the group there
+        
+        """
+        if isinstance(grp, str):
+            with h5py.File(grp, 'w') as f:
+                self._save(f)
+        else:
+            self._save(grp)
+            
+    def _save(self, grp):
+        """
+        See docstring for "save"
+        """
+        for key, val in self.dict.items():
+            if val is None:
+                grp.attrs[key] = np.nan
+            else:
+                grp.attrs[key] = val
+            
+    
+    def load(self, grp):
+        """
+        Load this cut from an h5 group
+        
+        grp : h5py.Group 
+            The location from which to load the h5 data. This could be the 
+            root group of its own h5 file, or a group within a larger h5 file.
+        
+        """
+        if isinstance(grp, str):
+            with h5py.File(grp, 'r') as f:
+                self._load(f)
+        else:
+            self._load(grp)
+            
+                    
+    def _load(self, grp):
+        for key in self.dict.keys():
+            val = grp.attrs[key]
+            # Interpret NaN as None
+            if np.isnan(val):
+                self.dict[key] = None
+            # Otherwise directly read in the value
+            else:
+                self.dict[key]=val
+            
+        
 
     def __getattr__(self, key):
         
@@ -170,12 +344,6 @@ class Cut:
         return [self.dict['emin'], self.dict['emax']]
                 
             
-            
-    #def empty(self):
-    #    return all(v is None for k,v in self.dict.items())
-            
-            
-            
     def __str__(self):
         s = [f"{key}:{val}" for key, val in self.dict.items() if val is not None ]
         s = ', '.join(s)
@@ -203,3 +371,27 @@ class Cut:
         
         # Return a 1 for every track that is in the cut
         return keep.astype(bool)
+    
+    
+    
+if __name__ == '__main__':
+    import os
+    from cr39py.cuts import Cut
+    domain = Cut(xmin=-5, xmax=0)
+    c1 = Cut(dmax=10)
+    c2 = Cut(cmax=40)
+    s = Subset(domain=domain)
+    s.set_ndslices(5)
+    s.set_current_dslice(2)
+    s.add_cut(c1)
+    s.add_cut(c2)
+    
+    
+    path = os.path.join(os.getcwd(), 'testsubset.h5')
+    print(path)
+    s.save(path)
+    
+    s2 = Subset(path)
+    print(s2.domain.dict)
+    print(s2.cuts[0].dict)
+    print(s2.cuts[1].dict)
