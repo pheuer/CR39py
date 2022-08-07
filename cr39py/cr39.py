@@ -743,7 +743,7 @@ class CR39:
                 
   
     def plot(self, axes=('X', 'Y'), log=False, clear=False, 
-             xrange=[None, None], yrange=[None, None], zrange=[None, None], 
+             xrange=None, yrange=None, zrange=None, 
              show=True, trim=True,
              figax = None):
         """
@@ -753,6 +753,14 @@ class CR39:
             Passes to the axes parameter of 'frames'
 
         """
+        
+        if xrange is None:
+            xrange = [None, None]
+        if yrange is None:
+            yrange = [None, None]
+        if zrange is None:
+            zrange = [None, None]
+            
         fontsize=16
         ticksize=14
         
