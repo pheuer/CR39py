@@ -5,6 +5,7 @@
 Adapted in part from code written by Hans Rinderknecht
 """
 import os
+import h5py
 import numpy as np
 
 from collections import namedtuple
@@ -146,13 +147,23 @@ class CR39:
         """
         self.verbose = verbose
         
+        # Initialize the subsets list
+        self.subsets = []
+        # If subests is None, initialze with a single blank subset
         if subsets is None:
             self.subsets = [Subset(),]
-        else:
+        # If subsets is a h5py.Grou or a string, try to load from there
+        elif isinstance(subsets, (h5py.Group, str)):
+            self.load(subsets)
+            
+        # If subsets is a list, assume it is a list of subsets
+        elif isinstance(subsets, list):
             self.subsets = subsets
+        else:
+            raise ValueError("Invalid type for kwarg 'subsets'")
         
         # The index of the currently selected subset
-        self.subset_i = 0
+        self.current_subset_i = 0
         
         # Store figures once created for blitting
         self.plotfig = None
@@ -172,6 +183,75 @@ class CR39:
         
         self._read_CPSA(self.path)
         
+        
+    def save(self, grp):
+           """
+           Save the data about this dataset into an h5 group
+           
+           grp : h5py.Group or path string
+               The location to save the h5 data. This could be the root group
+               of its own h5 file, or a group within a larger h5 file.
+               
+               If a string is provided instead of a group, try to open it as
+               an h5 file and create the group there
+           
+           """
+           if isinstance(grp, str):
+               with h5py.File(grp, 'w') as f:
+                   self._save(f)
+           else:
+               self._save(grp)
+               
+    def _save(self, grp):
+           """
+           See docstring for "save"
+           """
+           grp.attrs['path'] = self.path
+           grp.attrs['current_subset_i'] = self.current_subset_i
+           
+           subsets_grp = grp.create_group('subsets')
+           for i, subset in enumerate(self.subsets):
+               subset_grp = subsets_grp.create_group(f"subset_{i}")
+               subset.save(subset_grp)
+
+       
+    def load(self, grp):
+           """
+           Load this dataset from an h5 group
+           
+           grp : h5py.Group 
+               The location from which to load the h5 data. This could be the 
+               root group of its own h5 file, or a group within a larger h5 file.
+           
+           """
+           # Initialize the subsets list as empty
+           self.subsets = []
+           
+           
+           if isinstance(grp, str):
+               with h5py.File(grp, 'r') as f:
+                   self._load(f)
+           else:
+               self._load(grp)
+               
+           self.apply_cuts()
+           self.cutplot()
+              
+                        
+    def _load(self, grp):
+        """
+        See documentation for 'load'
+        """
+        self.path = str(grp.attrs['path'])
+        self.current_subset_i = int(grp.attrs['current_subset_i'])
+        
+        # Load the cuts
+        subsets_grp = grp["subsets"]
+        for key in subsets_grp:
+            self.subsets.append(Subset(subsets_grp[key]))
+            
+        
+        
     def _log(self, msg):
         if self.verbose:
             print(msg)
@@ -179,7 +259,7 @@ class CR39:
             
     @property
     def current_subset(self):
-        return self.subsets[self.subset_i]
+        return self.subsets[self.current_subset_i]
             
             
     def _find_data(self, id, data_dir):
@@ -360,7 +440,10 @@ class CR39:
         for i in range(self.nframes):
             self.trackdata[cum_hits[i]:cum_hits[i+1], :] = tracks[i]
             
+        # ntracks will change to keep track of the number currently selected
         self.ntracks = tot_hits
+        # raw_ntracks will always record the number on the entire piece
+        self.raw_ntracks = tot_hits
         
         # Sort the tracks by diameter for later slicing into energy dslices
         isort = np.argsort(self.trackdata[:,2])
@@ -376,7 +459,7 @@ class CR39:
         # Make axes for the other quantites
         self.dax = np.linspace(0, 20, num=40)
         self.cax = np.linspace(0, 80, num=80)
-        self.eax = np.linspace(0, 50, num=50)
+        self.eax = np.linspace(0, 50, num=60)
         
         
 
@@ -432,6 +515,17 @@ class CR39:
             weights = self.trackdata[:, i2]
         else:
             weights = None
+            
+            
+        # If the implied range is < 25x the spacing of the axis, 
+        # create a higher resolution axis that spans this range
+        dax0=np.mean(np.gradient(ax0))
+        if (np.max(ax0) - np.min(ax0)) < 10*dax0:
+            ax0 = np.linspace(np.min(ax0), np.max(ax0), num=30)
+        dax1=np.mean(np.gradient(ax1))
+        if (np.max(ax1) - np.min(ax1)) < 10*dax1:
+            ax1 = np.linspace(np.min(ax1), np.max(ax1), num=30)
+        
         
         
         rng = [(np.min(ax0), np.max(ax0)), (np.min(ax1), np.max(ax1))]
@@ -506,7 +600,7 @@ class CR39:
             print(f"Cannot select the {i} subset, there are only "
                              f"{len(self.subsets)} subsets.")
         else:
-            self.subset_i = i
+            self.current_subset_i = i
         
     def add_subset(self, *args):
         """
@@ -558,7 +652,7 @@ class CR39:
                     raise ValueError(f"Specified cut index is invalid: {s}")
         use_cuts = list(use_cuts)    
 
-        keep = np.ones(self.ntracks).astype(bool)   
+        keep = np.ones(self.raw_ntracks).astype(bool)   
         
         for i, cut in enumerate(self.current_subset.cuts):
             if i in use_cuts:
@@ -590,25 +684,28 @@ class CR39:
             b0 = self.current_subset.current_dslice*dbin
             b1 = b0 + dbin
             self.trackdata = self.trackdata[b0:b1, :]
+            
+        self.ntracks = self.trackdata.shape[0]
 
         
         
     
     def cli(self):
-        print("enter 'help' for a list of commands")
         self.apply_cuts()
         self.cutplot()
         
         while True:
             
             print ("*********************************************************")
-            print(f"Current subset index: {self.subset_i} of {np.arange(len(self.subsets))}")
+            print(f"Current subset index: {self.current_subset_i} of {np.arange(len(self.subsets))}")
             # Print a summary of the current subset
             print(self.current_subset)
+            print(f"ntracks selected: {self.ntracks:.1e} "
+                  f"(of {self.raw_ntracks:.1e})")
             
             print("add (a), edit (e), edit the domain (d), remove (r), plot (p), "
-                  "plot inverse (pi), switch subsets (s), change dslices (c), "
-                  "change the number of dslices (n), help (help)")
+                  "plot inverse (pi), switch subsets (subset), change dslices (dslice), "
+                  "change the number of dslices (ndslices), end (end), help (help)")
             split = _cli_input(mode='alpha-integer list')
             x = split[0]
             
@@ -623,7 +720,7 @@ class CR39:
                       "'d' -> edit the domain\n"
                       "'e' -> edit a cut\n"
                       "Argument (one int) is the cut to edit\n"
-                      "'n' -> Change the number of dslices on this subset."
+                      "'ndslices' -> Change the number of dslices on this subset."
                       "'p' -> plot the image with current cuts\n"
                       "Arguments are numbers of cuts to include in plot\n"
                       "The default is to include all of the current cuts\n"
@@ -632,7 +729,7 @@ class CR39:
                       "The default is to include all of the current cuts\n"
                       "'r' -> remove an existing cut\n"
                       "Arguments are numbers of cuts to remove\n"
-                      "'s' -> switch subsets or create a new subset\n"
+                      "'subset' -> switch subsets or create a new subset\n"
                       "Argument is the index of the subset to switch to, or"
                       "'new' to create a new subset"
                       "'help' -> print this documentation\n"
@@ -670,7 +767,7 @@ class CR39:
                 self.apply_cuts()
                 self.cutplot()
                 
-            elif x == 'c':
+            elif x == 'dslice':
                 if len(split)<2:
                     print("Select the index of the dslice to switch to, or"
                           "enter 'all' to select all dslices")
@@ -704,7 +801,6 @@ class CR39:
             elif x == 'e':
                 if len(split)>1:
                     ind = int(split[1])
-                    cut = self.current_subset.cuts[ind]
                     
                     print(f"Selected cut ({ind}) : " + str(self.current_subset.cuts[ind]))
                     print("Enter a list key:value pairs with which to modify this cut"
@@ -723,7 +819,7 @@ class CR39:
                     print("Specify the number of the cut you want to modify "
                           "as an argument after the command.")
                         
-            elif x == 'n':
+            elif x == 'ndslices':
                 if len(split)<2:
                     print("Enter the requested number of dslices")
                     ind = _cli_input(mode='alpha-integer')
@@ -748,17 +844,21 @@ class CR39:
                 self.cutplot()
 
             elif x == 'r':
-                if len(split)>1:
-                    for i in split[1:]:
-                        print(f"Removing cut {int(i)}")
-                        self.current_subset.remove_cut(int(i))
-                else:
-                    print("Specify which cuts to remove as arguments after the command.")
-                    
-                    
-            elif x == 's':
                 if len(split)<2:
-                    print("Select the index of the subset to switch to, or"
+                    print("Select the index of the cut to remove")
+                    ind = _cli_input(mode='integer')
+                else:
+                    ind = split[1]
+
+                print(f"Removing cut {int(ind)}")
+                self.current_subset.remove_cut(int(ind))
+                self.apply_cuts()
+                self.cutplot()
+                                 
+                    
+            elif x == 'subset':
+                if len(split)<2:
+                    print("Select the index of the subset to switch to, or "
                           "enter 'new' to create a new subset.")
                     ind = _cli_input(mode='alpha-integer')
                 else:
@@ -852,11 +952,16 @@ class CR39:
         ax.set_ylabel(axes[1], fontsize=fontsize)
         ax.set_title(title, fontsize=fontsize)
         
-        p = ax.pcolorfast(xax, yax, arr.T)
+        try:
+            p = ax.pcolorfast(xax, yax, arr.T)
+            
+            cb_kwargs = {'orientation':'vertical', 'pad':0.07, 'shrink':0.8, 'aspect':16}
+            cbar= fig.colorbar(p, ax=ax, **cb_kwargs)
+            cbar.set_label(ztitle, fontsize=fontsize)
+
+        except ValueError: # raised if one of the arrays is empty
+            pass
         
-        cb_kwargs = {'orientation':'vertical', 'pad':0.07, 'shrink':0.8, 'aspect':16}
-        cbar= fig.colorbar(p, ax=ax, **cb_kwargs)
-        cbar.set_label(ztitle, fontsize=fontsize)
         
         
         
@@ -869,7 +974,6 @@ class CR39:
         
     def cutplot(self, clear=False):
         
-
         self.cutplotfig = plt.subplots(nrows=2, ncols=2, figsize=(9,9))
         self.cutplotfig[0].subplots_adjust(hspace=0.3, wspace=0.3)
         
@@ -877,7 +981,7 @@ class CR39:
         # (fig, axarr, bkg)
         fig, axarr = self.cutplotfig
         
-        title = f"Subset {self.subset_i}, "
+        title = f"Subset {self.current_subset_i}, "
         if self.current_subset.current_dslice is None:
             title += 'All dslices selected'
         else:
@@ -926,15 +1030,25 @@ if __name__ == '__main__':
     data_dir = os.path.join("C:\\","Users","pvheu","Desktop","data_dir")
     #data_dir = os.path.join('//expdiv','kodi','ShotData')
     #data_dir = os.path.join('\\\profiles','Users$','pheu','Desktop','data_dir')
-    
-    domain = Cut(xmin=-5, xmax=0)
-    subset = Subset(domain=domain)
     obj = CR39(103955, data_dir=data_dir, verbose=True)
     
+    #domain = Cut(xmin=-5, xmax=0)
+    #subset = Subset(domain=domain)
+    
+    #obj.add_subset(subset)
     #obj.add_cut(Cut(cmin=40))
     
 
-    obj.cli()
+    #obj.cli()
+    
+    """
+    path = os.path.join(os.getcwd(), 'testcr39.h5')
+    print(path)
+    obj.save(path)
+    
+    c2 = CR39(103955, data_dir=data_dir, subsets=path)
+    print(c2.subsets)
+    """
         
         
         

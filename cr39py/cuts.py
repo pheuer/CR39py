@@ -96,6 +96,7 @@ class Subset:
            """
            See docstring for "save"
            """
+           
            grp.attrs['ndslices'] = self.ndslices
            if self.current_dslice is None:
                grp.attrs['current_dslice'] = np.nan
@@ -114,13 +115,16 @@ class Subset:
        
     def load(self, grp):
            """
-           Load this cut from an h5 group
+           Load this subset from an h5 group
            
            grp : h5py.Group 
                The location from which to load the h5 data. This could be the 
                root group of its own h5 file, or a group within a larger h5 file.
            
            """
+           # Re-initialize the cuts list as empty
+           self.cuts = []
+           
            if isinstance(grp, str):
                with h5py.File(grp, 'r') as f:
                    self._load(f)

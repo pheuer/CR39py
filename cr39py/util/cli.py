@@ -28,11 +28,11 @@ def _cli_input(mode='alphanumeric list'):
         x = str(input(">"))
         
         if mode=='integer':
-            if x in integers:
+            if set(x).issubset(integers):
                 return x
             
         elif mode=='alpha-integer':
-            if x in integers.union(alphas):
+            if set(x).issubset(integers.union(alphas)):
                 return x
 
         elif mode=='alpha-integer list':
