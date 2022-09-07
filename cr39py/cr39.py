@@ -877,6 +877,9 @@ class CR39:
             else:
                 print(f"Invalid input: {x}")
                 
+                
+                
+    
   
     def plot(self, axes=('X', 'Y'), log=False, clear=False, 
              xrange=None, yrange=None, zrange=None, 
@@ -1019,6 +1022,19 @@ class CR39:
         plt.show()
         
         return fig, ax
+    
+    def focus_plot(self):
+        """
+        Plot the focus (z coordinate) over the scan. Used to look for 
+        abnormalities that may indicate a failed scan.
+        """
+        
+        fig, ax = plt.subplots()
+        
+        self.plot(axes=('X', 'Y', 'Z'), trim=True, figax=(fig, ax),
+                  xrange=self.current_subset.domain.xrange,
+                  yrange=self.current_subset.domain.yrange)
+                
         
   
         
@@ -1030,7 +1046,8 @@ if __name__ == '__main__':
     data_dir = os.path.join("C:\\","Users","pvheu","Desktop","data_dir")
     #data_dir = os.path.join('//expdiv','kodi','ShotData')
     #data_dir = os.path.join('\\\profiles','Users$','pheu','Desktop','data_dir')
-    obj = CR39(103955, data_dir=data_dir, verbose=True)
+    data_dir = os.path.join("C:\\","Users","pheu","Data","data_dir")
+    obj = CR39(105521, data_dir=data_dir, verbose=True)
     
     #domain = Cut(xmin=-5, xmax=0)
     #subset = Subset(domain=domain)
