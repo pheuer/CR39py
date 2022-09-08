@@ -1049,6 +1049,17 @@ if __name__ == '__main__':
     data_dir = os.path.join("C:\\","Users","pheu","Data","data_dir")
     obj = CR39(105521, data_dir=data_dir, verbose=True)
     
+    
+    obj.plot()
+    obj.focus_plot()
+    
+    obj.cutplot()
+    obj.add_cut(Cut(cmin=35))
+    obj.add_cut(Cut(dmin=12))
+    obj.apply_cuts()
+    
+    obj.cutplot()
+    
     #domain = Cut(xmin=-5, xmax=0)
     #subset = Subset(domain=domain)
     
