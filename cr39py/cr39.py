@@ -205,6 +205,16 @@ class CR39(BaseObject):
            for i, subset in enumerate(self.subsets):
                subset_grp = subsets_grp.create_group(f"subset_{i}")
                subset.save(subset_grp)
+               
+               self.select_subset(i)
+               xaxis, yaxis, data = self.frames()
+               
+               subset_grp['xaxis'] = xaxis
+               subset_grp['xaxis'].attrs['unit'] = 'cm'
+               subset_grp['yaxis'] = yaxis
+               subset_grp['yaxis'].attrs['unit'] = 'cm'
+               subset_grp['data'] = data
+               
 
             
     def _load(self, grp):
