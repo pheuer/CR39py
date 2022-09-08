@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 
 from cr39py.util.misc import find_file
 from cr39py.util.cli import _cli_input
+from cr39py.util.base import BaseObject
 from cr39py.cuts import Cut, Subset
 
 
@@ -128,7 +129,7 @@ def energy_from_diameter(diameter, etchtime, particle='D',
 
                         
 
-class CR39:
+class CR39(BaseObject):
 
     # Axes dictionary for trackdata
     axes_ind = {'X':0, 'Y':1, 'D':2, 'C':3, 'E':5, 'Z':6}
@@ -174,6 +175,9 @@ class CR39:
         # if not, assume it is a shot number and look for it 
         if isinstance(args[0], str):
             self.path = args[0]
+        
+        elif isinstance(args[0], (h5py.File, h5py.Group)):
+            self.load(args[0])
         else:
             if data_dir is None:
                 raise ValueError("The 'data_dir' keyword is required in order "
@@ -184,60 +188,25 @@ class CR39:
         self._read_CPSA(self.path)
         
         
-    def save(self, grp):
-           """
-           Save the data about this dataset into an h5 group
-           
-           grp : h5py.Group or path string
-               The location to save the h5 data. This could be the root group
-               of its own h5 file, or a group within a larger h5 file.
-               
-               If a string is provided instead of a group, try to open it as
-               an h5 file and create the group there
-           
-           """
-           if isinstance(grp, str):
-               with h5py.File(grp, 'w') as f:
-                   self._save(f)
-           else:
-               self._save(grp)
+
                
     def _save(self, grp):
-           """
-           See docstring for "save"
-           """
+        
            grp.attrs['path'] = self.path
            grp.attrs['current_subset_i'] = self.current_subset_i
+           
+           grp.create_dataset('trackdata', self.trackdata.shape,
+                              compression='gzip', compression_opts=3,
+                              dtype='f4')
+
+           grp['trackdata'][...] = self.trackdata.astype(np.dtype('f4'))
            
            subsets_grp = grp.create_group('subsets')
            for i, subset in enumerate(self.subsets):
                subset_grp = subsets_grp.create_group(f"subset_{i}")
                subset.save(subset_grp)
 
-       
-    def load(self, grp):
-           """
-           Load this dataset from an h5 group
-           
-           grp : h5py.Group 
-               The location from which to load the h5 data. This could be the 
-               root group of its own h5 file, or a group within a larger h5 file.
-           
-           """
-           # Initialize the subsets list as empty
-           self.subsets = []
-           
-           
-           if isinstance(grp, str):
-               with h5py.File(grp, 'r') as f:
-                   self._load(f)
-           else:
-               self._load(grp)
-               
-           self.apply_cuts()
-           self.cutplot()
-              
-                        
+            
     def _load(self, grp):
         """
         See documentation for 'load'
@@ -245,10 +214,17 @@ class CR39:
         self.path = str(grp.attrs['path'])
         self.current_subset_i = int(grp.attrs['current_subset_i'])
         
+        self.trackdata = grp['trackdata'][...]
+        
         # Load the cuts
+        # Initialize the subsets list as empty
+        self.subsets = []
         subsets_grp = grp["subsets"]
         for key in subsets_grp:
             self.subsets.append(Subset(subsets_grp[key]))
+            
+            
+        self.apply_cuts()
             
         
         
@@ -436,22 +412,17 @@ class CR39:
         # 5) ecentricity
     
         # Re-shape the track data into a list of every track
-        self.trackdata = np.zeros([tot_hits, 7])
+        self.trackdata_subset = np.zeros([tot_hits, 7])
         for i in range(self.nframes):
-            self.trackdata[cum_hits[i]:cum_hits[i+1], :] = tracks[i]
-            
-        # ntracks will change to keep track of the number currently selected
-        self.ntracks = tot_hits
-        # raw_ntracks will always record the number on the entire piece
-        self.raw_ntracks = tot_hits
+            self.trackdata_subset[cum_hits[i]:cum_hits[i+1], :] = tracks[i]
         
         # Sort the tracks by diameter for later slicing into energy dslices
-        isort = np.argsort(self.trackdata[:,2])
-        self.trackdata = self.trackdata[isort, :]
+        isort = np.argsort(self.trackdata_subset[:,2])
+        self.trackdata_subset = self.trackdata_subset[isort, :]
         
         # Store all the tracks, as a starting point for making cuts on
-        # self.trackdata
-        self.raw_trackdata = np.copy(self.trackdata)
+        # self.trackdata_subset
+        self.trackdata = np.copy(self.trackdata_subset)
         
         # Sort the yaxis (it's backwards...)
         self.yax = np.sort(self.yax)
@@ -461,6 +432,14 @@ class CR39:
         self.cax = np.linspace(0, 80, num=80)
         self.eax = np.linspace(0, 50, num=60)
         
+        
+    @property
+    def ntracks(self):
+        return self.trackdata_subset.shape[0]
+    
+    @property
+    def raw_ntracks(self):
+        return self.trackdata.shape[0]
         
 
     def frames(self, axes=('X', 'Y'), trim=True, hax=None, vax=None):
@@ -512,7 +491,7 @@ class CR39:
         # If creating a histogram like the X,Y,D plots
         if len(axes) == 3:
             i2 = self.axes_ind[axes[2]]
-            weights = self.trackdata[:, i2]
+            weights = self.trackdata_subset[:, i2]
         else:
             weights = None
             
@@ -533,14 +512,14 @@ class CR39:
 
         xax = np.linspace(rng[0][0], rng[0][1], num=bins[0])
         yax = np.linspace(rng[1][0], rng[1][1], num=bins[1])
-        arr = histogram2d(self.trackdata[:,i0],self.trackdata[:,i1],
+        arr = histogram2d(self.trackdata_subset[:,i0],self.trackdata_subset[:,i1],
                           bins=bins, range=rng, weights=weights)
         
 
         # Create the unweighted histogram and divide by it (sans zeros)
         if len(axes)==3:
-            arr_uw = histogram2d(self.trackdata[:,i0],
-                                    self.trackdata[:,i1],
+            arr_uw = histogram2d(self.trackdata_subset[:,i0],
+                                    self.trackdata_subset[:,i1],
                                     bins=bins, range=rng)
             nz = np.nonzero(arr_uw)
             arr[nz] = arr[nz]/arr_uw[nz]
@@ -568,13 +547,13 @@ class CR39:
     
     
     def hreflect(self):
-        self.raw_trackdata[:, 0] *= -1
         self.trackdata[:, 0] *= -1
+        self.trackdata_subset[:, 0] *= -1
         self.plot()
         
     def vreflect(self):
-        self.raw_trackdata[:, 1] *= -1
         self.trackdata[:, 1] *= -1
+        self.trackdata_subset[:, 1] *= -1
         self.plot()
         
         
@@ -657,7 +636,7 @@ class CR39:
         for i, cut in enumerate(self.current_subset.cuts):
             if i in use_cuts:
                 # Get a boolean array of tracks that are inside this cut
-                x = cut.test(self.raw_trackdata)
+                x = cut.test(self.trackdata)
                 
                 # negate to get a list of tracks that are NOT
                 # in the excluded region (unless we are inverting)
@@ -668,10 +647,10 @@ class CR39:
         # Regardless of anything else, only show tracks that are within
         # the domain
         if self.current_subset.domain is not None:
-            keep *= self.current_subset.domain.test(self.raw_trackdata)
+            keep *= self.current_subset.domain.test(self.trackdata)
             
         # Select only these tracks
-        self.trackdata = self.raw_trackdata[keep, :]
+        self.trackdata_subset = self.trackdata[keep, :]
         
         
         # Calculate the bin edges for each dslice
@@ -679,13 +658,11 @@ class CR39:
         # when the CR39 data is read in
         if self.current_subset.current_dslice is not None:
             # Figure out the dslice width
-            dbin = int(self.trackdata.shape[0]/self.current_subset.ndslices)
+            dbin = int(self.trackdata_subset.shape[0]/self.current_subset.ndslices)
             # Extract the appropriate portion of the tracks
             b0 = self.current_subset.current_dslice*dbin
             b1 = b0 + dbin
-            self.trackdata = self.trackdata[b0:b1, :]
-            
-        self.ntracks = self.trackdata.shape[0]
+            self.trackdata_subset = self.trackdata_subset[b0:b1, :]
 
         
         

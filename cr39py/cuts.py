@@ -7,7 +7,9 @@ Classes fod cuts and subsets of CR39 data
 import numpy as np
 import h5py
 
-class Subset:
+from cr39py.util.base import BaseObject
+
+class Subset(BaseObject):
     """
     A subset of the track data. The subset is defined by a domain, a list
     of cuts, and a number of diameter slices (Dslices). 
@@ -73,30 +75,9 @@ class Subset:
                 with h5py.File(args[0], 'r') as f:
                     self.load(f)
                     
-    
-    def save(self, grp):
-           """
-           Save the data about this subset into an h5 group
-           
-           grp : h5py.Group or path string
-               The location to save the h5 data. This could be the root group
-               of its own h5 file, or a group within a larger h5 file.
-               
-               If a string is provided instead of a group, try to open it as
-               an h5 file and create the group there
-           
-           """
-           if isinstance(grp, str):
-               with h5py.File(grp, 'w') as f:
-                   self._save(f)
-           else:
-               self._save(grp)
-               
+
     def _save(self, grp):
-           """
-           See docstring for "save"
-           """
-           
+
            grp.attrs['ndslices'] = self.ndslices
            if self.current_dslice is None:
                grp.attrs['current_dslice'] = np.nan
@@ -111,27 +92,7 @@ class Subset:
            for i, cut in enumerate(self.cuts):
                c_grp = cuts_grp.create_group(f"cut_{i}")
                cut.save(c_grp)
-
-       
-    def load(self, grp):
-           """
-           Load this subset from an h5 group
-           
-           grp : h5py.Group 
-               The location from which to load the h5 data. This could be the 
-               root group of its own h5 file, or a group within a larger h5 file.
-           
-           """
-           # Re-initialize the cuts list as empty
-           self.cuts = []
-           
-           if isinstance(grp, str):
-               with h5py.File(grp, 'r') as f:
-                   self._load(f)
-           else:
-               self._load(grp)
-                
-                        
+          
     def _load(self, grp):
         """
         See documentation for 'load'
@@ -211,7 +172,7 @@ class Subset:
 
 
 
-class Cut:
+class Cut(BaseObject):
     """
     A cut is series of upper and lower bounds on tracks that should be
     excluded. 
@@ -259,26 +220,7 @@ class Cut:
                 with h5py.File(args[0], 'r') as f:
                     self.load(f)
             
-    
-            
-        
-    def save(self, grp):
-        """
-        Save the data about this cut into an h5 group
-        
-        grp : h5py.Group or path string
-            The location to save the h5 data. This could be the root group
-            of its own h5 file, or a group within a larger h5 file.
-            
-            If a string is provided instead of a group, try to open it as
-            an h5 file and create the group there
-        
-        """
-        if isinstance(grp, str):
-            with h5py.File(grp, 'w') as f:
-                self._save(f)
-        else:
-            self._save(grp)
+
             
     def _save(self, grp):
         """
@@ -290,23 +232,7 @@ class Cut:
             else:
                 grp.attrs[key] = val
             
-    
-    def load(self, grp):
-        """
-        Load this cut from an h5 group
-        
-        grp : h5py.Group 
-            The location from which to load the h5 data. This could be the 
-            root group of its own h5 file, or a group within a larger h5 file.
-        
-        """
-        if isinstance(grp, str):
-            with h5py.File(grp, 'r') as f:
-                self._load(f)
-        else:
-            self._load(grp)
-            
-                    
+      
     def _load(self, grp):
         for key in self.dict.keys():
             val = grp.attrs[key]
