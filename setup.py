@@ -17,5 +17,5 @@ setuptools.setup(
     },
     license='MIT',
     packages=setuptools.find_packages(),
-    install_requires=['numpy', 'h5py', 'matplotlib','fast_histogram', 'astropy'],
+    install_requires=['numpy', 'h5py', 'matplotlib','fast_histogram', 'pint', 'xarray'],
 )

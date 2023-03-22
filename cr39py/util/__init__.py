@@ -1,3 +1,1 @@
-import os
-
-root_dir = os.path.dirname(__file__)
+__all__ = ['baseobject', 'cli', 'misc', 'pkg', 'units']
